@@ -489,6 +489,29 @@ billiard-app-windows/
   svelte.config.js
   tailwind.config.js
   vite.config.js
+musica/
+  adiiswanto-relaxing-smooth-jazz-music-465316.mp3
+  litesaturation-no-copyright-jazz-echo-breeze-echo-565654.mp3
+  litesaturation-no-copyright-jazz-electric-harbor-dream-565663.mp3
+  litesaturation-no-copyright-jazz-winter-ballad-dream-565657.mp3
+  music_for_creators-relax-jazz-driftwood-dreams-357555.mp3
+  music_for_creators-royalty-free-jazz-coastal-melody-363473.mp3
+  surprising_media-guitar-jazz-311537.mp3
+  surprising_media-guitar-jazz-311538.mp3
+  waveloom-no-copyright-jazz-audio-525509.mp3
+  waveloom-no-copyright-jazz-background-525531.mp3
+  waveloom-no-copyright-jazz-background-music-525506.mp3
+  waveloom-no-copyright-jazz-blog-525530.mp3
+  waveloom-no-copyright-jazz-cafe-525510.mp3
+  waveloom-no-copyright-jazz-chill-525508.mp3
+  waveloom-no-copyright-jazz-free-525512.mp3
+  waveloom-no-copyright-jazz-lounge-525507.mp3
+  waveloom-no-copyright-jazz-no-copyright-jazz-525528.mp3
+  waveloom-no-copyright-jazz-piano-525533.mp3
+  waveloom-no-copyright-jazz-saxophone-525520.mp3
+  waveloom-no-copyright-jazz-smooth-525517.mp3
+  waveloom-no-copyright-jazz-teaser-525513.mp3
+  waveloom-no-copyright-jazz-video-525504.mp3
 public/
   renders/
     partida_exportada_1792368654845.mp4
@@ -1691,10 +1714,11 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
 
 <file path="billiard-app-windows/src/lib/components/control/ControlView.svelte">
 <script>
+  import { onMount } from 'svelte';
   import { matchStore } from '../../stores/matchStore.js';
   import PlayerCard from './PlayerCard.svelte';
   import TickerAdmin from './TickerAdmin.svelte';
-  import { ArrowLeftRight, Play, Pause, RotateCcw, Clock, ToggleLeft, ToggleRight, UserCheck, Image, Sliders } from 'lucide-svelte';
+  import { ArrowLeftRight, Play, Pause, RotateCcw, Clock, ToggleLeft, ToggleRight, UserCheck, Image, Sliders, QrCode, X } from 'lucide-svelte';
 
   $: timer = $matchStore.timer;
   $: turns = $matchStore.turns;
@@ -1702,27 +1726,57 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
   $: uiScale = $matchStore.uiScale || { hud: 1.0, ticker: 1.0 };
 
   let customSecondsInput = 30;
+  let showQrModal = false;
+  let serverNetworkIp = '';
+
+  onMount(async () => {
+    try {
+      const res = await fetch('/api/network-info');
+      const data = await res.json();
+      if (data && data.ip && data.ip !== 'localhost' && data.ip !== '127.0.0.1') {
+        serverNetworkIp = data.ip;
+      }
+    } catch (e) {}
+  });
+
+  $: mobileHost = (serverNetworkIp && (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')))
+    ? serverNetworkIp
+    : (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+
+  $: currentMobileUrl = typeof window !== 'undefined'
+    ? `${window.location.protocol}//${mobileHost}:5173/?view=control`
+    : '';
 </script>
 
-<div class="min-h-screen bg-[#07080b] text-white p-6 font-sans flex flex-col gap-6">
+<div class="min-h-screen bg-[#07080b] text-white p-3 sm:p-6 font-sans flex flex-col gap-4 sm:gap-6 overflow-x-hidden">
   
   <!-- Barra Superior -->
-  <header class="flex items-center justify-between border-b border-white/10 pb-4">
-    <div>
-      <h1 class="text-xl font-black tracking-wider uppercase font-mono text-amber-400">Panel de Control</h1>
-      <p class="text-xs text-neutral-400">Control de partida en vivo para OBS Studio</p>
+  <header class="flex flex-col lg:flex-row lg:items-center justify-between border-b border-white/10 pb-4 gap-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-lg sm:text-xl font-black tracking-wider uppercase font-mono text-amber-400">Panel de Control</h1>
+        <p class="text-[11px] sm:text-xs text-neutral-400">Control de partida en vivo para OBS Studio y Móvil</p>
+      </div>
+
+      <!-- Botón Móvil visible en cabecera en pantallas chicas -->
+      <button
+        on:click={() => showQrModal = true}
+        class="lg:hidden px-3 py-1.5 rounded-xl text-xs font-bold border border-amber-500/50 bg-amber-950/40 text-amber-300 flex items-center gap-1.5"
+      >
+        <QrCode size={14} class="text-amber-400" /> Móvil
+      </button>
     </div>
 
-    <!-- Acciones Rápidas -->
-    <div class="flex items-center gap-3">
+    <!-- Acciones Rápidas (En PC exactamente igual, en móvil con flex-wrap para que no se desborde) -->
+    <div class="flex flex-wrap items-center gap-2 sm:gap-3">
       
       <!-- DESLIZADORES DE ESCALA (HUD Y CINTA) -->
-      <div class="flex items-center gap-3 bg-[#0a0c12] border border-neutral-800 px-3 py-1.5 rounded-xl">
-        <Sliders size={14} class="text-amber-400" />
+      <div class="flex items-center gap-2 sm:gap-3 bg-[#0a0c12] border border-neutral-800 px-2.5 sm:px-3 py-1.5 rounded-xl">
+        <Sliders size={14} class="text-amber-400 shrink-0" />
         
         <!-- Escala Marcador -->
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-mono text-neutral-400 uppercase">Marcador:</span>
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <span class="text-[9px] sm:text-[10px] font-mono text-neutral-400 uppercase">HUD:</span>
           <input
             type="range"
             min="0.70"
@@ -1730,16 +1784,16 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
             step="0.05"
             value={uiScale.hud}
             on:input={(e) => matchStore.setHudScale(e.target.value)}
-            class="w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
+            class="w-14 sm:w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
           />
-          <span class="text-[10px] font-mono font-bold text-amber-400 w-8">{Math.round(uiScale.hud * 100)}%</span>
+          <span class="text-[9px] sm:text-[10px] font-mono font-bold text-amber-400 w-7 sm:w-8 text-right">{Math.round(uiScale.hud * 100)}%</span>
         </div>
 
-        <div class="w-[1px] h-4 bg-neutral-800"></div>
+        <div class="w-[1px] h-3.5 bg-neutral-800"></div>
 
         <!-- Escala Cinta -->
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-mono text-neutral-400 uppercase">Cinta:</span>
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <span class="text-[9px] sm:text-[10px] font-mono text-neutral-400 uppercase">Cinta:</span>
           <input
             type="range"
             min="0.70"
@@ -1747,56 +1801,65 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
             step="0.05"
             value={uiScale.ticker}
             on:input={(e) => matchStore.setTickerScale(e.target.value)}
-            class="w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
+            class="w-14 sm:w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
           />
-          <span class="text-[10px] font-mono font-bold text-amber-400 w-8">{Math.round(uiScale.ticker * 100)}%</span>
+          <span class="text-[9px] sm:text-[10px] font-mono font-bold text-amber-400 w-7 sm:w-8 text-right">{Math.round(uiScale.ticker * 100)}%</span>
         </div>
       </div>
+
+      <!-- BOTÓN CONECTAR MÓVIL EN ESCRITORIO -->
+      <button
+        on:click={() => showQrModal = true}
+        class="hidden lg:flex px-3 py-2 rounded-xl text-xs font-bold border border-amber-500/50 bg-amber-950/40 text-amber-300 hover:bg-amber-900/60 items-center gap-1.5 transition active:scale-95 shadow-sm"
+        title="Ver enlace y QR para tu celular"
+      >
+        <QrCode size={15} class="text-amber-400" /> Móvil
+      </button>
 
       <!-- Activar / Desactivar Fotos -->
       <button
         on:click={() => matchStore.toggleAvatars()}
-        class="px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition
+        class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition
           {showAvatars ? 'bg-neutral-800 border-neutral-700 text-white' : 'bg-neutral-900 border-neutral-800 text-neutral-500'}"
       >
-        <Image size={15} class={showAvatars ? 'text-amber-400' : 'text-neutral-500'} />
+        <Image size={14} class={showAvatars ? 'text-amber-400' : 'text-neutral-500'} />
         Fotos: {showAvatars ? 'ON' : 'OFF'}
       </button>
 
       <!-- Control Maestro de Turnos -->
       <button
         on:click={() => matchStore.toggleTurns()}
-        class="px-3.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-2 transition
+        class="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 sm:gap-2 transition
           {turns.enabled ? 'bg-amber-950/70 border-amber-500/60 text-amber-300' : 'bg-neutral-800 border-neutral-700 text-neutral-400'}"
       >
         {#if turns.enabled}
-          <ToggleRight size={18} class="text-amber-400" /> Turnos: ON
+          <ToggleRight size={17} class="text-amber-400" /> Turnos: ON
         {:else}
-          <ToggleLeft size={18} /> Turnos: OFF
+          <ToggleLeft size={17} /> Turnos: OFF
         {/if}
       </button>
 
       {#if turns.enabled}
         <button
           on:click={() => matchStore.switchTurn()}
-          class="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 transition active:scale-95 shadow-md"
+          class="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 transition active:scale-95 shadow-md"
         >
-          <UserCheck size={15} /> Cambiar Turno
+          <UserCheck size={14} /> Cambiar Turno
         </button>
       {/if}
 
       <!-- Invertir Troneras -->
       <button
         on:click={() => matchStore.swapPockets()}
-        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-2 transition active:scale-95"
+        class="px-3 sm:px-4 py-1.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-1.5 sm:gap-2 transition active:scale-95"
       >
-        <ArrowLeftRight size={15} class="text-amber-400" /> Invertir (L ⇄ R)
+        <ArrowLeftRight size={14} class="text-amber-400" /> Invertir (L ⇄ R)
       </button>
 
       <select
         value={$matchStore.modality}
         on:change={(e) => matchStore.updateState(s => ({ ...s, modality: e.target.value }))}
-        class="bg-neutral-900 border border-neutral-700 text-xs font-bold rounded-xl px-3 py-2 text-white outline-none cursor-pointer"
+        class="bg-neutral-900 border border-neutral-700 text-xs font-bold rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 text-white outline-none cursor-pointer"
       >
         <option value="ONE POCKET">ONE POCKET</option>
         <option value="BOLA 8">BOLA 8 (Próximamente)</option>
@@ -1805,69 +1868,71 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
     </div>
   </header>
 
-  <!-- TARJETAS DE JUGADORES -->
-  <main class="grid grid-cols-2 gap-6 items-start">
+  <!-- TARJETAS DE JUGADORES: En PC 2 columnas exactas; en celular 1 columna apilada -->
+  <main class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
     <PlayerCard playerKey="p1" title="Jugador 1" />
     <PlayerCard playerKey="p2" title="Jugador 2" />
   </main>
 
   <!-- CONTROLES DEL RELOJ DE TIRO -->
-  <div class="bg-[#10131c] border border-white/15 rounded-2xl p-5 flex items-center justify-between shadow-xl">
-    <div class="flex items-center gap-3">
-      <Clock size={22} class="text-amber-400" />
-      <div>
-        <h4 class="text-sm font-bold uppercase font-mono tracking-wider text-white">Reloj de Tiro (Shot Clock)</h4>
-        <span class="text-xs text-neutral-400">{timer.enabled ? 'Barra activa bajo el marcador' : 'Oculto'}</span>
+  <div class="bg-[#10131c] border border-white/15 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row items-stretch md:items-center justify-between shadow-xl gap-4">
+    <div class="flex items-center justify-between sm:justify-start gap-3">
+      <div class="flex items-center gap-3">
+        <Clock size={22} class="text-amber-400 shrink-0" />
+        <div>
+          <h4 class="text-xs sm:text-sm font-bold uppercase font-mono tracking-wider text-white">Reloj de Tiro</h4>
+          <span class="text-[10px] sm:text-xs text-neutral-400">{timer.enabled ? 'Barra activa bajo el HUD' : 'Oculto'}</span>
+        </div>
       </div>
       <button
         on:click={() => matchStore.toggleTimer()}
-        class="ml-4 px-3 py-1.5 text-xs font-bold rounded-lg border transition {timer.enabled ? 'bg-amber-950/70 border-amber-500/50 text-amber-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400'}"
+        class="px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-lg border transition {timer.enabled ? 'bg-amber-950/70 border-amber-500/50 text-amber-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400'}"
       >
-        {timer.enabled ? 'Ocultar Reloj' : 'Mostrar Reloj'}
+        {timer.enabled ? 'Ocultar' : 'Mostrar'}
       </button>
     </div>
 
     <!-- Botonera centralizada -->
-    <div class="flex items-center gap-4">
+    <div class="flex flex-wrap items-center justify-between sm:justify-end gap-3 sm:gap-4">
       
-      <div class="flex items-center bg-[#090b10] border border-neutral-700/80 rounded-xl p-1 gap-2 shadow-inner">
-        <span class="text-xs font-mono font-bold text-neutral-400 pl-2.5">Fijar:</span>
+      <div class="flex items-center bg-[#090b10] border border-neutral-700/80 rounded-xl p-1 gap-1.5 sm:gap-2 shadow-inner">
+        <span class="text-xs font-mono font-bold text-neutral-400 pl-2">Fijar:</span>
         <input
           type="number"
           min="5"
           max="180"
           bind:value={customSecondsInput}
-          class="w-14 bg-neutral-900 border border-neutral-700 focus:border-amber-500 text-sm font-mono font-black text-amber-400 outline-none text-center py-1.5 rounded-lg"
+          class="w-12 sm:w-14 bg-neutral-900 border border-neutral-700 focus:border-amber-500 text-xs sm:text-sm font-mono font-black text-amber-400 outline-none text-center py-1 rounded-lg"
         />
         <span class="text-xs font-mono text-neutral-400">s</span>
         <button
           on:click={() => matchStore.setCustomTimer(customSecondsInput)}
-          class="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-lg transition border border-white/5"
+          class="px-2.5 sm:px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-lg transition border border-white/5"
         >
-          Aplicar
+          OK
         </button>
       </div>
 
-      <span class="text-3xl font-black font-mono text-amber-400 w-16 text-center drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]">
+      <span class="text-2xl sm:text-3xl font-black font-mono text-amber-400 w-14 sm:w-16 text-center drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]">
         {Math.ceil(timer.seconds)}s
       </span>
 
       <button
         on:click={() => matchStore.setTimerRunning(!timer.running)}
-        class="px-6 py-2.5 {timer.running ? 'bg-amber-500 text-black' : 'bg-emerald-600 text-white'} text-sm font-black rounded-xl flex items-center gap-2 transition active:scale-95 shadow-lg"
+        class="flex-1 sm:flex-initial px-4 sm:px-6 py-2 sm:py-2.5 {timer.running ? 'bg-amber-500 text-black' : 'bg-emerald-600 text-white'} text-xs sm:text-sm font-black rounded-xl flex items-center justify-center gap-2 transition active:scale-95 shadow-lg"
       >
         {#if timer.running}
-          <Pause size={17} /> Pausar
+          <Pause size={16} /> Pausar
         {:else}
-          <Play size={17} /> Iniciar
+          <Play size={16} /> Iniciar
         {/if}
       </button>
 
       <button
         on:click={() => matchStore.resetTimer(timer.maxSeconds)}
-        class="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-xl flex items-center gap-2 transition border border-white/10"
+        class="px-3 sm:px-4 py-2 sm:py-2.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-xl flex items-center gap-1.5 transition border border-white/10"
       >
-        <RotateCcw size={16} class="text-amber-400" /> Reiniciar
+        <RotateCcw size={15} class="text-amber-400" />
       </button>
 
     </div>
@@ -1875,6 +1940,48 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
 
   <!-- GESTOR DE TICKER / MARCAS -->
   <TickerAdmin />
+
+  <!-- MODAL DE CONEXIÓN CON EL MÓVIL MEDIANTE QR -->
+  {#if showQrModal}
+    <div class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#12151e] border border-amber-500/40 rounded-2xl p-5 sm:p-6 text-white max-w-sm w-full flex flex-col items-center gap-4 shadow-2xl relative">
+        <button
+          on:click={() => showQrModal = false}
+          class="absolute top-4 right-4 text-neutral-400 hover:text-white transition"
+        >
+          <X size={20} />
+        </button>
+
+        <h3 class="text-sm font-black uppercase font-mono tracking-wider text-amber-400 flex items-center gap-2">
+          <QrCode size={18} /> Conectar con tu Móvil
+        </h3>
+        <p class="text-xs text-neutral-400 text-center">
+          Conéctate a la misma red Wi-Fi y escanea este código con la cámara de tu celular:
+        </p>
+
+        <div class="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center">
+          <img
+            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={encodeURIComponent(currentMobileUrl)}"
+            alt="Código QR de Conexión Móvil"
+            class="w-44 h-44 object-contain"
+          />
+        </div>
+
+        <div class="bg-black/60 p-2.5 rounded-xl border border-white/10 w-full text-center">
+          <span class="text-[11px] font-mono text-neutral-300 break-all select-all font-bold">
+            {currentMobileUrl}
+          </span>
+        </div>
+
+        <button
+          on:click={() => showQrModal = false}
+          class="w-full py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-xl transition"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  {/if}
 
 </div>
 </file>
@@ -2098,7 +2205,7 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
   }
 </script>
 
-<div class="bg-[#10131c] border transition-all duration-300 rounded-2xl p-5 flex flex-col gap-4 shadow-xl relative overflow-hidden flex-1
+<div class="bg-[#10131c] border transition-all duration-300 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 shadow-xl relative overflow-hidden flex-1
   {isTurn ? 'border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.15)]' : 'border-white/10'}"
 >
   <!-- Cabecera -->
@@ -2140,7 +2247,7 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
     {#if showAvatars}
       <button
         on:click={() => showCropModal = true}
-        class="relative group rounded-full overflow-hidden w-24 h-24 ring-4 transition
+        class="relative group rounded-full overflow-hidden w-20 h-20 sm:w-24 sm:h-24 ring-4 transition
           {isTurn ? 'ring-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]' : 'ring-neutral-700 shadow-md'}"
       >
         <img src={player.avatar} alt={player.name} class="w-full h-full object-cover" />
@@ -2158,20 +2265,19 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
           bind:value={tempName}
           on:keydown={(e) => e.key === 'Enter' && saveName()}
           class="bg-neutral-900 border border-amber-500 rounded px-2 py-1 text-sm font-bold text-white text-center uppercase outline-none"
-          autofocus
         />
         <button on:click={saveName} class="px-2 py-1 bg-amber-500 text-black text-xs font-bold rounded">OK</button>
       </div>
     {:else}
       <button on:click={startNameEdit} class="flex items-center gap-2 group mt-1">
-        <span class="text-xl font-black tracking-wider text-white uppercase group-hover:text-amber-400 transition">{player.name}</span>
+        <span class="text-lg sm:text-xl font-black tracking-wider text-white uppercase group-hover:text-amber-400 transition">{player.name}</span>
         <Pencil size={15} class="text-neutral-500 group-hover:text-amber-400 transition" />
       </button>
     {/if}
   </div>
 
   <!-- Contadores -->
-  <div class="grid grid-cols-2 gap-4 bg-[#0a0c12] p-3 rounded-xl border border-white/5">
+  <div class="grid grid-cols-2 gap-3 sm:gap-4 bg-[#0a0c12] p-2.5 sm:p-3 rounded-xl border border-white/5">
     
     <!-- Bolas -->
     <div class="flex flex-col items-center gap-2">
@@ -2180,15 +2286,15 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
       <div class="flex items-center gap-2 w-full">
         <button
           on:click={() => matchStore.adjustBalls(playerKey, -1)}
-          class="flex-1 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-lg flex items-center justify-center transition active:scale-95"
+          class="flex-1 py-2.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90"
         >
-          <Minus size={16} />
+          <Minus size={18} />
         </button>
         <button
           on:click={() => matchStore.adjustBalls(playerKey, 1)}
-          class="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-lg flex items-center justify-center transition active:scale-95 shadow-md"
+          class="flex-1 py-2.5 sm:py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90 shadow-md"
         >
-          <Plus size={16} />
+          <Plus size={18} />
         </button>
       </div>
     </div>
@@ -2200,26 +2306,26 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
       <div class="flex items-center gap-2 w-full">
         <button
           on:click={() => matchStore.adjustGames(playerKey, -1)}
-          class="flex-1 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-lg flex items-center justify-center transition active:scale-95"
+          class="flex-1 py-2.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90"
         >
-          <Minus size={16} />
+          <Minus size={18} />
         </button>
         <button
           on:click={() => matchStore.adjustGames(playerKey, 1)}
-          class="flex-1 py-2 bg-neutral-700 hover:bg-neutral-600 text-white font-black rounded-lg flex items-center justify-center transition active:scale-95 shadow-md"
+          class="flex-1 py-2.5 sm:py-2 bg-neutral-700 hover:bg-neutral-600 text-white font-black rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90 shadow-md"
         >
-          <Plus size={16} />
+          <Plus size={18} />
         </button>
       </div>
     </div>
 
   </div>
 
-  <!-- SECCIÓN DESPLEGABLE CON BOTONES LIMPIOS (SIN TEXTOS DEBAJO) -->
+  <!-- SECCIÓN DESPLEGABLE CON REACCIONES EN VIVO -->
   <div class="border-t border-white/5 pt-2">
     <button
       on:click={() => showEffectsMenu = !showEffectsMenu}
-      class="w-full py-1.5 px-3 bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 rounded-xl flex items-center justify-between text-xs font-bold text-neutral-300 transition"
+      class="w-full py-2 sm:py-1.5 px-3 bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 rounded-xl flex items-center justify-between text-xs font-bold text-neutral-300 transition"
     >
       <span class="flex items-center gap-2">
         <Sparkles size={14} class="text-amber-400" />
@@ -2233,7 +2339,6 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
     </button>
 
     {#if showEffectsMenu}
-      <!-- Cuadrícula de iconos -->
       <div class="grid grid-cols-4 gap-2 mt-2.5 p-2 bg-[#08090d] rounded-xl border border-white/5">
         
         <button
@@ -2371,35 +2476,35 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
   }
 </script>
 
-<div class="bg-[#10131c] border border-white/15 rounded-2xl p-5 flex flex-col gap-4 shadow-xl">
-  <div class="flex items-center justify-between border-b border-white/10 pb-3">
+<div class="bg-[#10131c] border border-white/15 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 shadow-xl">
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-3">
     <div>
-      <h3 class="text-sm font-bold text-white tracking-wide uppercase font-mono">Gestor de Marcas y Avisos</h3>
-      <p class="text-[11px] text-neutral-400">Los cambios se aplican al instante al pulsar "Aplicar Cambios"</p>
+      <h3 class="text-xs sm:text-sm font-bold text-white tracking-wide uppercase font-mono">Gestor de Marcas y Avisos</h3>
+      <p class="text-[10px] sm:text-[11px] text-neutral-400">Los cambios se aplican al pulsar "Aplicar Cambios"</p>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2 sm:gap-3">
       <button
         on:click={() => matchStore.toggleTickerVisible()}
-        class="px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition {ticker.visible ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}"
+        class="px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition {ticker.visible ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}"
       >
         {#if ticker.visible}
-          <Eye size={14} /> Cinta Visible
+          <Eye size={14} /> Visible
         {:else}
-          <EyeOff size={14} /> Cinta Oculta
+          <EyeOff size={14} /> Oculta
         {/if}
       </button>
 
       <button
         on:click={applyChanges}
-        class="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-lg flex items-center gap-1.5 shadow-md transition active:scale-95"
+        class="px-3 sm:px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-lg flex items-center gap-1.5 shadow-md transition active:scale-95"
       >
-        <RefreshCw size={14} /> Aplicar Cambios
+        <RefreshCw size={14} /> Aplicar
       </button>
     </div>
   </div>
 
   <div class="flex flex-col gap-2.5 bg-[#090b10] p-3 rounded-xl border border-white/5">
-    <div class="flex items-center gap-2">
+    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
       <select
         bind:value={newItemType}
         class="bg-neutral-800 border border-neutral-700 text-white text-xs rounded-lg px-2.5 py-2 outline-none font-bold cursor-pointer"
@@ -2418,15 +2523,15 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
         class="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white px-3 py-2 outline-none font-mono focus:border-amber-500"
       />
 
-      <button on:click={addItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center gap-1">
+      <button on:click={addItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center justify-center gap-1">
         <Plus size={15} /> Añadir
       </button>
     </div>
 
-    <div class="flex items-center gap-3 text-xs pt-1 border-t border-white/5">
-      <span class="text-neutral-400 flex items-center gap-1 text-[11px]"><ImageIcon size={13} /> Logo (opcional):</span>
+    <div class="flex flex-wrap items-center gap-2 sm:gap-3 text-xs pt-1 border-t border-white/5">
+      <span class="text-neutral-400 flex items-center gap-1 text-[11px]"><ImageIcon size={13} /> Logo:</span>
       
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1.5">
         <button
           type="button"
           on:click={() => logoInputMode = 'file'}
@@ -2448,14 +2553,14 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
           type="file" 
           accept="image/*" 
           on:change={handleLogoFile} 
-          class="text-[11px] text-neutral-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[10px] file:bg-neutral-800 file:text-white cursor-pointer"
+          class="text-[11px] text-neutral-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-neutral-800 file:text-white cursor-pointer"
         />
       {:else}
         <input
           type="text"
           bind:value={newItemLogo}
           placeholder="https://ejemplo.com/logo.png"
-          class="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2.5 py-1 text-xs text-white outline-none font-mono"
+          class="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2.5 py-1 text-xs text-white outline-none font-mono min-w-[140px]"
         />
       {/if}
 
@@ -2468,24 +2573,24 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
     </div>
   </div>
 
-  <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
     {#each stagedItems as item (item.id)}
       <div class="flex items-center justify-between p-2 rounded-lg border {item.active ? 'bg-neutral-900/80 border-white/10' : 'bg-neutral-950/40 border-neutral-800 opacity-50'} transition">
         <div class="flex items-center gap-2 overflow-hidden">
           {#if item.logoUrl}
-            <img src={item.logoUrl} alt="logo" class="h-5 w-7 object-contain bg-black/50 rounded p-0.5" />
+            <img src={item.logoUrl} alt="logo" class="h-5 w-7 object-contain bg-black/50 rounded p-0.5 shrink-0" />
           {/if}
-          <span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded {item.type === 'sponsor' ? 'bg-amber-950 text-amber-400 border border-amber-500/40' : item.type === 'aviso' ? 'bg-blue-950 text-blue-400 border border-blue-500/40' : 'bg-neutral-800 text-neutral-400'}">
+          <span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 {item.type === 'sponsor' ? 'bg-amber-950 text-amber-400 border border-amber-500/40' : item.type === 'aviso' ? 'bg-blue-950 text-blue-400 border border-blue-500/40' : 'bg-neutral-800 text-neutral-400'}">
             {item.type}
           </span>
-          <span class="text-xs font-mono font-bold text-white truncate max-w-[160px]">{item.text}</span>
+          <span class="text-xs font-mono font-bold text-white truncate max-w-[140px] sm:max-w-[160px]">{item.text}</span>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <button on:click={() => toggleActive(item.id)} class="p-1 hover:text-white text-neutral-400 transition">
-            {#if item.active}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+            {#if item.active}<Eye size={15} />{:else}<EyeOff size={15} />{/if}
           </button>
           <button on:click={() => removeItem(item.id)} class="p-1 hover:text-rose-400 text-neutral-500 transition">
-            <Trash2 size={14} />
+            <Trash2 size={15} />
           </button>
         </div>
       </div>
@@ -3698,7 +3803,7 @@ echo "✨ Sincronización milimétrica, volúmenes suaves y espejo izquierdo com
 
       isUploadingForRender = false;
 
-      const ws = new WebSocket('ws://localhost:3001');
+      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'; ws = new WebSocket(`ws://${host}:3001`);
       renderWs = ws;
 
       ws.onopen = () => {
@@ -4455,13 +4560,14 @@ const defaultState = {
 export const liveEffect = writable(null);
 
 function createMatchStore() {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
   const initial = saved ? JSON.parse(saved) : defaultState;
   const { subscribe, set, update } = writable(initial);
 
   let ws;
   function connectWS() {
-    ws = new WebSocket('ws://localhost:3001');
+    const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
+    ws = new WebSocket(`ws://${host}:3001`);
 
     ws.onmessage = (event) => {
       try {
@@ -4493,7 +4599,9 @@ function createMatchStore() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'SYNC_STATE', payload: state }));
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
   }
 
   return {
@@ -9658,6 +9766,7 @@ import { createServer as createViteServer } from 'vite';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import ffmpegPath from 'ffmpeg-static';
 
 const FFMPEG_BIN = ffmpegPath || 'ffmpeg';
@@ -9930,7 +10039,6 @@ function runFFmpegRender(payload, wsClient) {
   console.log('🚀 COMANDO FFMPEG EJECUTÁNDOSE:', FFMPEG_BIN, ffmpegArgs.join(' '));
 
   let stderrLog = '';
-  // Utiliza el binario de FFmpeg nativo o el de Windows (ffmpeg-static)
   const proc = spawn(FFMPEG_BIN, ffmpegArgs);
   activeRenderProc = proc;
 
@@ -9988,6 +10096,18 @@ function runFFmpegRender(payload, wsClient) {
   });
 }
 
+function getLocalIp() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal && iface.address !== '127.0.0.1') {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
 /* ==================== SERVIDOR ==================== */
 async function start() {
   const server = createServer((req, res) => {
@@ -9998,6 +10118,13 @@ async function start() {
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+
+    // Endpoint para proveer la IP local al navegador
+    if (req.method === 'GET' && req.url === '/api/network-info') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ip: getLocalIp(), port: 5173 }));
       return;
     }
 
@@ -10105,15 +10232,38 @@ async function start() {
     });
   });
 
-  server.listen(3001, () => {
-    console.log('📡 Servidor activo en ws://localhost:3001');
-  });
+  server.listen(3001, '0.0.0.0', () => {});
 
   const vite = await createViteServer({
-    server: { port: 5173 }
+    server: { 
+      host: '0.0.0.0',
+      port: 5173 
+    }
   });
   await vite.listen();
-  vite.printUrls();
+
+  const localIp = getLocalIp();
+  const pcUrl = 'http://localhost:5173/?view=control';
+  const mobileUrl = `http://${localIp}:5173/?view=control`;
+  const obsUrl = 'http://localhost:5173/?view=overlay';
+
+  console.log('\n==========================================================');
+  console.log('   🎱 SISTEMA DE BILLAR INICIADO CORRECTAMENTE');
+  console.log('==========================================================');
+  console.log(`💻 ENLACE EN TU PC (Control):  ${pcUrl}`);
+  console.log(`📱 ENLACE PARA TU MÓVIL:       ${mobileUrl}`);
+  console.log(`📺 OVERLAY PARA OBS:           ${obsUrl}`);
+  console.log('==========================================================\n');
+
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd.exe', ['/c', 'start', '', pcUrl]);
+    } else if (process.platform === 'darwin') {
+      spawn('open', [pcUrl]);
+    } else {
+      spawn('xdg-open', [pcUrl]);
+    }
+  } catch (e) {}
 }
 
 start();
@@ -10778,10 +10928,11 @@ start();
 
 <file path="src/lib/components/control/ControlView.svelte">
 <script>
+  import { onMount } from 'svelte';
   import { matchStore } from '../../stores/matchStore.js';
   import PlayerCard from './PlayerCard.svelte';
   import TickerAdmin from './TickerAdmin.svelte';
-  import { ArrowLeftRight, Play, Pause, RotateCcw, Clock, ToggleLeft, ToggleRight, UserCheck, Image, Sliders } from 'lucide-svelte';
+  import { ArrowLeftRight, Play, Pause, RotateCcw, Clock, ToggleLeft, ToggleRight, UserCheck, Image, Sliders, QrCode, X } from 'lucide-svelte';
 
   $: timer = $matchStore.timer;
   $: turns = $matchStore.turns;
@@ -10789,27 +10940,57 @@ start();
   $: uiScale = $matchStore.uiScale || { hud: 1.0, ticker: 1.0 };
 
   let customSecondsInput = 30;
+  let showQrModal = false;
+  let serverNetworkIp = '';
+
+  onMount(async () => {
+    try {
+      const res = await fetch('/api/network-info');
+      const data = await res.json();
+      if (data && data.ip && data.ip !== 'localhost' && data.ip !== '127.0.0.1') {
+        serverNetworkIp = data.ip;
+      }
+    } catch (e) {}
+  });
+
+  $: mobileHost = (serverNetworkIp && (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')))
+    ? serverNetworkIp
+    : (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+
+  $: currentMobileUrl = typeof window !== 'undefined'
+    ? `${window.location.protocol}//${mobileHost}:5173/?view=control`
+    : '';
 </script>
 
-<div class="min-h-screen bg-[#07080b] text-white p-6 font-sans flex flex-col gap-6">
+<div class="min-h-screen bg-[#07080b] text-white p-3 sm:p-6 font-sans flex flex-col gap-4 sm:gap-6 overflow-x-hidden">
   
   <!-- Barra Superior -->
-  <header class="flex items-center justify-between border-b border-white/10 pb-4">
-    <div>
-      <h1 class="text-xl font-black tracking-wider uppercase font-mono text-amber-400">Panel de Control</h1>
-      <p class="text-xs text-neutral-400">Control de partida en vivo para OBS Studio</p>
+  <header class="flex flex-col lg:flex-row lg:items-center justify-between border-b border-white/10 pb-4 gap-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-lg sm:text-xl font-black tracking-wider uppercase font-mono text-amber-400">Panel de Control</h1>
+        <p class="text-[11px] sm:text-xs text-neutral-400">Control de partida en vivo para OBS Studio y Móvil</p>
+      </div>
+
+      <!-- Botón Móvil visible en cabecera en pantallas chicas -->
+      <button
+        on:click={() => showQrModal = true}
+        class="lg:hidden px-3 py-1.5 rounded-xl text-xs font-bold border border-amber-500/50 bg-amber-950/40 text-amber-300 flex items-center gap-1.5"
+      >
+        <QrCode size={14} class="text-amber-400" /> Móvil
+      </button>
     </div>
 
-    <!-- Acciones Rápidas -->
-    <div class="flex items-center gap-3">
+    <!-- Acciones Rápidas (En PC exactamente igual, en móvil con flex-wrap para que no se desborde) -->
+    <div class="flex flex-wrap items-center gap-2 sm:gap-3">
       
       <!-- DESLIZADORES DE ESCALA (HUD Y CINTA) -->
-      <div class="flex items-center gap-3 bg-[#0a0c12] border border-neutral-800 px-3 py-1.5 rounded-xl">
-        <Sliders size={14} class="text-amber-400" />
+      <div class="flex items-center gap-2 sm:gap-3 bg-[#0a0c12] border border-neutral-800 px-2.5 sm:px-3 py-1.5 rounded-xl">
+        <Sliders size={14} class="text-amber-400 shrink-0" />
         
         <!-- Escala Marcador -->
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-mono text-neutral-400 uppercase">Marcador:</span>
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <span class="text-[9px] sm:text-[10px] font-mono text-neutral-400 uppercase">HUD:</span>
           <input
             type="range"
             min="0.70"
@@ -10817,16 +10998,16 @@ start();
             step="0.05"
             value={uiScale.hud}
             on:input={(e) => matchStore.setHudScale(e.target.value)}
-            class="w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
+            class="w-14 sm:w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
           />
-          <span class="text-[10px] font-mono font-bold text-amber-400 w-8">{Math.round(uiScale.hud * 100)}%</span>
+          <span class="text-[9px] sm:text-[10px] font-mono font-bold text-amber-400 w-7 sm:w-8 text-right">{Math.round(uiScale.hud * 100)}%</span>
         </div>
 
-        <div class="w-[1px] h-4 bg-neutral-800"></div>
+        <div class="w-[1px] h-3.5 bg-neutral-800"></div>
 
         <!-- Escala Cinta -->
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-mono text-neutral-400 uppercase">Cinta:</span>
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <span class="text-[9px] sm:text-[10px] font-mono text-neutral-400 uppercase">Cinta:</span>
           <input
             type="range"
             min="0.70"
@@ -10834,56 +11015,65 @@ start();
             step="0.05"
             value={uiScale.ticker}
             on:input={(e) => matchStore.setTickerScale(e.target.value)}
-            class="w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
+            class="w-14 sm:w-16 accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
           />
-          <span class="text-[10px] font-mono font-bold text-amber-400 w-8">{Math.round(uiScale.ticker * 100)}%</span>
+          <span class="text-[9px] sm:text-[10px] font-mono font-bold text-amber-400 w-7 sm:w-8 text-right">{Math.round(uiScale.ticker * 100)}%</span>
         </div>
       </div>
+
+      <!-- BOTÓN CONECTAR MÓVIL EN ESCRITORIO -->
+      <button
+        on:click={() => showQrModal = true}
+        class="hidden lg:flex px-3 py-2 rounded-xl text-xs font-bold border border-amber-500/50 bg-amber-950/40 text-amber-300 hover:bg-amber-900/60 items-center gap-1.5 transition active:scale-95 shadow-sm"
+        title="Ver enlace y QR para tu celular"
+      >
+        <QrCode size={15} class="text-amber-400" /> Móvil
+      </button>
 
       <!-- Activar / Desactivar Fotos -->
       <button
         on:click={() => matchStore.toggleAvatars()}
-        class="px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition
+        class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition
           {showAvatars ? 'bg-neutral-800 border-neutral-700 text-white' : 'bg-neutral-900 border-neutral-800 text-neutral-500'}"
       >
-        <Image size={15} class={showAvatars ? 'text-amber-400' : 'text-neutral-500'} />
+        <Image size={14} class={showAvatars ? 'text-amber-400' : 'text-neutral-500'} />
         Fotos: {showAvatars ? 'ON' : 'OFF'}
       </button>
 
       <!-- Control Maestro de Turnos -->
       <button
         on:click={() => matchStore.toggleTurns()}
-        class="px-3.5 py-2 rounded-xl text-xs font-bold border flex items-center gap-2 transition
+        class="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 sm:gap-2 transition
           {turns.enabled ? 'bg-amber-950/70 border-amber-500/60 text-amber-300' : 'bg-neutral-800 border-neutral-700 text-neutral-400'}"
       >
         {#if turns.enabled}
-          <ToggleRight size={18} class="text-amber-400" /> Turnos: ON
+          <ToggleRight size={17} class="text-amber-400" /> Turnos: ON
         {:else}
-          <ToggleLeft size={18} /> Turnos: OFF
+          <ToggleLeft size={17} /> Turnos: OFF
         {/if}
       </button>
 
       {#if turns.enabled}
         <button
           on:click={() => matchStore.switchTurn()}
-          class="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 transition active:scale-95 shadow-md"
+          class="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 transition active:scale-95 shadow-md"
         >
-          <UserCheck size={15} /> Cambiar Turno
+          <UserCheck size={14} /> Cambiar Turno
         </button>
       {/if}
 
       <!-- Invertir Troneras -->
       <button
         on:click={() => matchStore.swapPockets()}
-        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-2 transition active:scale-95"
+        class="px-3 sm:px-4 py-1.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-1.5 sm:gap-2 transition active:scale-95"
       >
-        <ArrowLeftRight size={15} class="text-amber-400" /> Invertir (L ⇄ R)
+        <ArrowLeftRight size={14} class="text-amber-400" /> Invertir (L ⇄ R)
       </button>
 
       <select
         value={$matchStore.modality}
         on:change={(e) => matchStore.updateState(s => ({ ...s, modality: e.target.value }))}
-        class="bg-neutral-900 border border-neutral-700 text-xs font-bold rounded-xl px-3 py-2 text-white outline-none cursor-pointer"
+        class="bg-neutral-900 border border-neutral-700 text-xs font-bold rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 text-white outline-none cursor-pointer"
       >
         <option value="ONE POCKET">ONE POCKET</option>
         <option value="BOLA 8">BOLA 8 (Próximamente)</option>
@@ -10892,69 +11082,71 @@ start();
     </div>
   </header>
 
-  <!-- TARJETAS DE JUGADORES -->
-  <main class="grid grid-cols-2 gap-6 items-start">
+  <!-- TARJETAS DE JUGADORES: En PC 2 columnas exactas; en celular 1 columna apilada -->
+  <main class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
     <PlayerCard playerKey="p1" title="Jugador 1" />
     <PlayerCard playerKey="p2" title="Jugador 2" />
   </main>
 
   <!-- CONTROLES DEL RELOJ DE TIRO -->
-  <div class="bg-[#10131c] border border-white/15 rounded-2xl p-5 flex items-center justify-between shadow-xl">
-    <div class="flex items-center gap-3">
-      <Clock size={22} class="text-amber-400" />
-      <div>
-        <h4 class="text-sm font-bold uppercase font-mono tracking-wider text-white">Reloj de Tiro (Shot Clock)</h4>
-        <span class="text-xs text-neutral-400">{timer.enabled ? 'Barra activa bajo el marcador' : 'Oculto'}</span>
+  <div class="bg-[#10131c] border border-white/15 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row items-stretch md:items-center justify-between shadow-xl gap-4">
+    <div class="flex items-center justify-between sm:justify-start gap-3">
+      <div class="flex items-center gap-3">
+        <Clock size={22} class="text-amber-400 shrink-0" />
+        <div>
+          <h4 class="text-xs sm:text-sm font-bold uppercase font-mono tracking-wider text-white">Reloj de Tiro</h4>
+          <span class="text-[10px] sm:text-xs text-neutral-400">{timer.enabled ? 'Barra activa bajo el HUD' : 'Oculto'}</span>
+        </div>
       </div>
       <button
         on:click={() => matchStore.toggleTimer()}
-        class="ml-4 px-3 py-1.5 text-xs font-bold rounded-lg border transition {timer.enabled ? 'bg-amber-950/70 border-amber-500/50 text-amber-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400'}"
+        class="px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-lg border transition {timer.enabled ? 'bg-amber-950/70 border-amber-500/50 text-amber-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400'}"
       >
-        {timer.enabled ? 'Ocultar Reloj' : 'Mostrar Reloj'}
+        {timer.enabled ? 'Ocultar' : 'Mostrar'}
       </button>
     </div>
 
     <!-- Botonera centralizada -->
-    <div class="flex items-center gap-4">
+    <div class="flex flex-wrap items-center justify-between sm:justify-end gap-3 sm:gap-4">
       
-      <div class="flex items-center bg-[#090b10] border border-neutral-700/80 rounded-xl p-1 gap-2 shadow-inner">
-        <span class="text-xs font-mono font-bold text-neutral-400 pl-2.5">Fijar:</span>
+      <div class="flex items-center bg-[#090b10] border border-neutral-700/80 rounded-xl p-1 gap-1.5 sm:gap-2 shadow-inner">
+        <span class="text-xs font-mono font-bold text-neutral-400 pl-2">Fijar:</span>
         <input
           type="number"
           min="5"
           max="180"
           bind:value={customSecondsInput}
-          class="w-14 bg-neutral-900 border border-neutral-700 focus:border-amber-500 text-sm font-mono font-black text-amber-400 outline-none text-center py-1.5 rounded-lg"
+          class="w-12 sm:w-14 bg-neutral-900 border border-neutral-700 focus:border-amber-500 text-xs sm:text-sm font-mono font-black text-amber-400 outline-none text-center py-1 rounded-lg"
         />
         <span class="text-xs font-mono text-neutral-400">s</span>
         <button
           on:click={() => matchStore.setCustomTimer(customSecondsInput)}
-          class="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-lg transition border border-white/5"
+          class="px-2.5 sm:px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-lg transition border border-white/5"
         >
-          Aplicar
+          OK
         </button>
       </div>
 
-      <span class="text-3xl font-black font-mono text-amber-400 w-16 text-center drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]">
+      <span class="text-2xl sm:text-3xl font-black font-mono text-amber-400 w-14 sm:w-16 text-center drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]">
         {Math.ceil(timer.seconds)}s
       </span>
 
       <button
         on:click={() => matchStore.setTimerRunning(!timer.running)}
-        class="px-6 py-2.5 {timer.running ? 'bg-amber-500 text-black' : 'bg-emerald-600 text-white'} text-sm font-black rounded-xl flex items-center gap-2 transition active:scale-95 shadow-lg"
+        class="flex-1 sm:flex-initial px-4 sm:px-6 py-2 sm:py-2.5 {timer.running ? 'bg-amber-500 text-black' : 'bg-emerald-600 text-white'} text-xs sm:text-sm font-black rounded-xl flex items-center justify-center gap-2 transition active:scale-95 shadow-lg"
       >
         {#if timer.running}
-          <Pause size={17} /> Pausar
+          <Pause size={16} /> Pausar
         {:else}
-          <Play size={17} /> Iniciar
+          <Play size={16} /> Iniciar
         {/if}
       </button>
 
       <button
         on:click={() => matchStore.resetTimer(timer.maxSeconds)}
-        class="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-xl flex items-center gap-2 transition border border-white/10"
+        class="px-3 sm:px-4 py-2 sm:py-2.5 bg-neutral-800 hover:bg-neutral-700 active:scale-95 text-xs font-bold text-white rounded-xl flex items-center gap-1.5 transition border border-white/10"
       >
-        <RotateCcw size={16} class="text-amber-400" /> Reiniciar
+        <RotateCcw size={15} class="text-amber-400" />
       </button>
 
     </div>
@@ -10962,6 +11154,48 @@ start();
 
   <!-- GESTOR DE TICKER / MARCAS -->
   <TickerAdmin />
+
+  <!-- MODAL DE CONEXIÓN CON EL MÓVIL MEDIANTE QR -->
+  {#if showQrModal}
+    <div class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#12151e] border border-amber-500/40 rounded-2xl p-5 sm:p-6 text-white max-w-sm w-full flex flex-col items-center gap-4 shadow-2xl relative">
+        <button
+          on:click={() => showQrModal = false}
+          class="absolute top-4 right-4 text-neutral-400 hover:text-white transition"
+        >
+          <X size={20} />
+        </button>
+
+        <h3 class="text-sm font-black uppercase font-mono tracking-wider text-amber-400 flex items-center gap-2">
+          <QrCode size={18} /> Conectar con tu Móvil
+        </h3>
+        <p class="text-xs text-neutral-400 text-center">
+          Conéctate a la misma red Wi-Fi y escanea este código con la cámara de tu celular:
+        </p>
+
+        <div class="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center">
+          <img
+            src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={encodeURIComponent(currentMobileUrl)}"
+            alt="Código QR de Conexión Móvil"
+            class="w-44 h-44 object-contain"
+          />
+        </div>
+
+        <div class="bg-black/60 p-2.5 rounded-xl border border-white/10 w-full text-center">
+          <span class="text-[11px] font-mono text-neutral-300 break-all select-all font-bold">
+            {currentMobileUrl}
+          </span>
+        </div>
+
+        <button
+          on:click={() => showQrModal = false}
+          class="w-full py-2 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-xl transition"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  {/if}
 
 </div>
 </file>
@@ -11185,7 +11419,7 @@ start();
   }
 </script>
 
-<div class="bg-[#10131c] border transition-all duration-300 rounded-2xl p-5 flex flex-col gap-4 shadow-xl relative overflow-hidden flex-1
+<div class="bg-[#10131c] border transition-all duration-300 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 shadow-xl relative overflow-hidden flex-1
   {isTurn ? 'border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.15)]' : 'border-white/10'}"
 >
   <!-- Cabecera -->
@@ -11227,7 +11461,7 @@ start();
     {#if showAvatars}
       <button
         on:click={() => showCropModal = true}
-        class="relative group rounded-full overflow-hidden w-24 h-24 ring-4 transition
+        class="relative group rounded-full overflow-hidden w-20 h-20 sm:w-24 sm:h-24 ring-4 transition
           {isTurn ? 'ring-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]' : 'ring-neutral-700 shadow-md'}"
       >
         <img src={player.avatar} alt={player.name} class="w-full h-full object-cover" />
@@ -11245,20 +11479,19 @@ start();
           bind:value={tempName}
           on:keydown={(e) => e.key === 'Enter' && saveName()}
           class="bg-neutral-900 border border-amber-500 rounded px-2 py-1 text-sm font-bold text-white text-center uppercase outline-none"
-          autofocus
         />
         <button on:click={saveName} class="px-2 py-1 bg-amber-500 text-black text-xs font-bold rounded">OK</button>
       </div>
     {:else}
       <button on:click={startNameEdit} class="flex items-center gap-2 group mt-1">
-        <span class="text-xl font-black tracking-wider text-white uppercase group-hover:text-amber-400 transition">{player.name}</span>
+        <span class="text-lg sm:text-xl font-black tracking-wider text-white uppercase group-hover:text-amber-400 transition">{player.name}</span>
         <Pencil size={15} class="text-neutral-500 group-hover:text-amber-400 transition" />
       </button>
     {/if}
   </div>
 
   <!-- Contadores -->
-  <div class="grid grid-cols-2 gap-4 bg-[#0a0c12] p-3 rounded-xl border border-white/5">
+  <div class="grid grid-cols-2 gap-3 sm:gap-4 bg-[#0a0c12] p-2.5 sm:p-3 rounded-xl border border-white/5">
     
     <!-- Bolas -->
     <div class="flex flex-col items-center gap-2">
@@ -11267,15 +11500,15 @@ start();
       <div class="flex items-center gap-2 w-full">
         <button
           on:click={() => matchStore.adjustBalls(playerKey, -1)}
-          class="flex-1 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-lg flex items-center justify-center transition active:scale-95"
+          class="flex-1 py-2.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90"
         >
-          <Minus size={16} />
+          <Minus size={18} />
         </button>
         <button
           on:click={() => matchStore.adjustBalls(playerKey, 1)}
-          class="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-lg flex items-center justify-center transition active:scale-95 shadow-md"
+          class="flex-1 py-2.5 sm:py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90 shadow-md"
         >
-          <Plus size={16} />
+          <Plus size={18} />
         </button>
       </div>
     </div>
@@ -11287,26 +11520,26 @@ start();
       <div class="flex items-center gap-2 w-full">
         <button
           on:click={() => matchStore.adjustGames(playerKey, -1)}
-          class="flex-1 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-lg flex items-center justify-center transition active:scale-95"
+          class="flex-1 py-2.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90"
         >
-          <Minus size={16} />
+          <Minus size={18} />
         </button>
         <button
           on:click={() => matchStore.adjustGames(playerKey, 1)}
-          class="flex-1 py-2 bg-neutral-700 hover:bg-neutral-600 text-white font-black rounded-lg flex items-center justify-center transition active:scale-95 shadow-md"
+          class="flex-1 py-2.5 sm:py-2 bg-neutral-700 hover:bg-neutral-600 text-white font-black rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90 shadow-md"
         >
-          <Plus size={16} />
+          <Plus size={18} />
         </button>
       </div>
     </div>
 
   </div>
 
-  <!-- SECCIÓN DESPLEGABLE CON BOTONES LIMPIOS (SIN TEXTOS DEBAJO) -->
+  <!-- SECCIÓN DESPLEGABLE CON REACCIONES EN VIVO -->
   <div class="border-t border-white/5 pt-2">
     <button
       on:click={() => showEffectsMenu = !showEffectsMenu}
-      class="w-full py-1.5 px-3 bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 rounded-xl flex items-center justify-between text-xs font-bold text-neutral-300 transition"
+      class="w-full py-2 sm:py-1.5 px-3 bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 rounded-xl flex items-center justify-between text-xs font-bold text-neutral-300 transition"
     >
       <span class="flex items-center gap-2">
         <Sparkles size={14} class="text-amber-400" />
@@ -11320,7 +11553,6 @@ start();
     </button>
 
     {#if showEffectsMenu}
-      <!-- Cuadrícula de iconos -->
       <div class="grid grid-cols-4 gap-2 mt-2.5 p-2 bg-[#08090d] rounded-xl border border-white/5">
         
         <button
@@ -11458,35 +11690,35 @@ start();
   }
 </script>
 
-<div class="bg-[#10131c] border border-white/15 rounded-2xl p-5 flex flex-col gap-4 shadow-xl">
-  <div class="flex items-center justify-between border-b border-white/10 pb-3">
+<div class="bg-[#10131c] border border-white/15 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 shadow-xl">
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-3">
     <div>
-      <h3 class="text-sm font-bold text-white tracking-wide uppercase font-mono">Gestor de Marcas y Avisos</h3>
-      <p class="text-[11px] text-neutral-400">Los cambios se aplican al instante al pulsar "Aplicar Cambios"</p>
+      <h3 class="text-xs sm:text-sm font-bold text-white tracking-wide uppercase font-mono">Gestor de Marcas y Avisos</h3>
+      <p class="text-[10px] sm:text-[11px] text-neutral-400">Los cambios se aplican al pulsar "Aplicar Cambios"</p>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2 sm:gap-3">
       <button
         on:click={() => matchStore.toggleTickerVisible()}
-        class="px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition {ticker.visible ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}"
+        class="px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition {ticker.visible ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}"
       >
         {#if ticker.visible}
-          <Eye size={14} /> Cinta Visible
+          <Eye size={14} /> Visible
         {:else}
-          <EyeOff size={14} /> Cinta Oculta
+          <EyeOff size={14} /> Oculta
         {/if}
       </button>
 
       <button
         on:click={applyChanges}
-        class="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-lg flex items-center gap-1.5 shadow-md transition active:scale-95"
+        class="px-3 sm:px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-lg flex items-center gap-1.5 shadow-md transition active:scale-95"
       >
-        <RefreshCw size={14} /> Aplicar Cambios
+        <RefreshCw size={14} /> Aplicar
       </button>
     </div>
   </div>
 
   <div class="flex flex-col gap-2.5 bg-[#090b10] p-3 rounded-xl border border-white/5">
-    <div class="flex items-center gap-2">
+    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
       <select
         bind:value={newItemType}
         class="bg-neutral-800 border border-neutral-700 text-white text-xs rounded-lg px-2.5 py-2 outline-none font-bold cursor-pointer"
@@ -11505,15 +11737,15 @@ start();
         class="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white px-3 py-2 outline-none font-mono focus:border-amber-500"
       />
 
-      <button on:click={addItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center gap-1">
+      <button on:click={addItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center justify-center gap-1">
         <Plus size={15} /> Añadir
       </button>
     </div>
 
-    <div class="flex items-center gap-3 text-xs pt-1 border-t border-white/5">
-      <span class="text-neutral-400 flex items-center gap-1 text-[11px]"><ImageIcon size={13} /> Logo (opcional):</span>
+    <div class="flex flex-wrap items-center gap-2 sm:gap-3 text-xs pt-1 border-t border-white/5">
+      <span class="text-neutral-400 flex items-center gap-1 text-[11px]"><ImageIcon size={13} /> Logo:</span>
       
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1.5">
         <button
           type="button"
           on:click={() => logoInputMode = 'file'}
@@ -11535,14 +11767,14 @@ start();
           type="file" 
           accept="image/*" 
           on:change={handleLogoFile} 
-          class="text-[11px] text-neutral-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[10px] file:bg-neutral-800 file:text-white cursor-pointer"
+          class="text-[11px] text-neutral-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-neutral-800 file:text-white cursor-pointer"
         />
       {:else}
         <input
           type="text"
           bind:value={newItemLogo}
           placeholder="https://ejemplo.com/logo.png"
-          class="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2.5 py-1 text-xs text-white outline-none font-mono"
+          class="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2.5 py-1 text-xs text-white outline-none font-mono min-w-[140px]"
         />
       {/if}
 
@@ -11555,24 +11787,24 @@ start();
     </div>
   </div>
 
-  <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
     {#each stagedItems as item (item.id)}
       <div class="flex items-center justify-between p-2 rounded-lg border {item.active ? 'bg-neutral-900/80 border-white/10' : 'bg-neutral-950/40 border-neutral-800 opacity-50'} transition">
         <div class="flex items-center gap-2 overflow-hidden">
           {#if item.logoUrl}
-            <img src={item.logoUrl} alt="logo" class="h-5 w-7 object-contain bg-black/50 rounded p-0.5" />
+            <img src={item.logoUrl} alt="logo" class="h-5 w-7 object-contain bg-black/50 rounded p-0.5 shrink-0" />
           {/if}
-          <span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded {item.type === 'sponsor' ? 'bg-amber-950 text-amber-400 border border-amber-500/40' : item.type === 'aviso' ? 'bg-blue-950 text-blue-400 border border-blue-500/40' : 'bg-neutral-800 text-neutral-400'}">
+          <span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 {item.type === 'sponsor' ? 'bg-amber-950 text-amber-400 border border-amber-500/40' : item.type === 'aviso' ? 'bg-blue-950 text-blue-400 border border-blue-500/40' : 'bg-neutral-800 text-neutral-400'}">
             {item.type}
           </span>
-          <span class="text-xs font-mono font-bold text-white truncate max-w-[160px]">{item.text}</span>
+          <span class="text-xs font-mono font-bold text-white truncate max-w-[140px] sm:max-w-[160px]">{item.text}</span>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <button on:click={() => toggleActive(item.id)} class="p-1 hover:text-white text-neutral-400 transition">
-            {#if item.active}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+            {#if item.active}<Eye size={15} />{:else}<EyeOff size={15} />{/if}
           </button>
           <button on:click={() => removeItem(item.id)} class="p-1 hover:text-rose-400 text-neutral-500 transition">
-            <Trash2 size={14} />
+            <Trash2 size={15} />
           </button>
         </div>
       </div>
@@ -12785,7 +13017,7 @@ start();
 
       isUploadingForRender = false;
 
-      const ws = new WebSocket('ws://localhost:3001');
+      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'; ws = new WebSocket(`ws://${host}:3001`);
       renderWs = ws;
 
       ws.onopen = () => {
@@ -13542,13 +13774,14 @@ const defaultState = {
 export const liveEffect = writable(null);
 
 function createMatchStore() {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
   const initial = saved ? JSON.parse(saved) : defaultState;
   const { subscribe, set, update } = writable(initial);
 
   let ws;
   function connectWS() {
-    ws = new WebSocket('ws://localhost:3001');
+    const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
+    ws = new WebSocket(`ws://${host}:3001`);
 
     ws.onmessage = (event) => {
       try {
@@ -13580,7 +13813,9 @@ function createMatchStore() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'SYNC_STATE', payload: state }));
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
   }
 
   return {
@@ -14025,6 +14260,7 @@ import { createServer as createViteServer } from 'vite';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import ffmpegPath from 'ffmpeg-static';
 
 const FFMPEG_BIN = ffmpegPath || 'ffmpeg';
@@ -14297,7 +14533,6 @@ function runFFmpegRender(payload, wsClient) {
   console.log('🚀 COMANDO FFMPEG EJECUTÁNDOSE:', FFMPEG_BIN, ffmpegArgs.join(' '));
 
   let stderrLog = '';
-  // Utiliza el binario de FFmpeg nativo o el de Windows (ffmpeg-static)
   const proc = spawn(FFMPEG_BIN, ffmpegArgs);
   activeRenderProc = proc;
 
@@ -14355,6 +14590,18 @@ function runFFmpegRender(payload, wsClient) {
   });
 }
 
+function getLocalIp() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal && iface.address !== '127.0.0.1') {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
 /* ==================== SERVIDOR ==================== */
 async function start() {
   const server = createServer((req, res) => {
@@ -14365,6 +14612,13 @@ async function start() {
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+
+    // Endpoint para proveer la IP local al navegador
+    if (req.method === 'GET' && req.url === '/api/network-info') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ip: getLocalIp(), port: 5173 }));
       return;
     }
 
@@ -14472,15 +14726,38 @@ async function start() {
     });
   });
 
-server.listen(3001, '0.0.0.0', () => {
-  console.log('📡 Servidor activo en la red local');
-});
+  server.listen(3001, '0.0.0.0', () => {});
 
   const vite = await createViteServer({
-    server: { port: 5173 }
+    server: { 
+      host: '0.0.0.0',
+      port: 5173 
+    }
   });
   await vite.listen();
-  vite.printUrls();
+
+  const localIp = getLocalIp();
+  const pcUrl = 'http://localhost:5173/?view=control';
+  const mobileUrl = `http://${localIp}:5173/?view=control`;
+  const obsUrl = 'http://localhost:5173/?view=overlay';
+
+  console.log('\n==========================================================');
+  console.log('   🎱 SISTEMA DE BILLAR INICIADO CORRECTAMENTE');
+  console.log('==========================================================');
+  console.log(`💻 ENLACE EN TU PC (Control):  ${pcUrl}`);
+  console.log(`📱 ENLACE PARA TU MÓVIL:       ${mobileUrl}`);
+  console.log(`📺 OVERLAY PARA OBS:           ${obsUrl}`);
+  console.log('==========================================================\n');
+
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd.exe', ['/c', 'start', '', pcUrl]);
+    } else if (process.platform === 'darwin') {
+      spawn('open', [pcUrl]);
+    } else {
+      spawn('xdg-open', [pcUrl]);
+    }
+  } catch (e) {}
 }
 
 start();
@@ -14490,7 +14767,7 @@ start();
 {
   "p1": {
     "name": "IVAN BELMONTE",
-    "balls": 1,
+    "balls": 2,
     "games": 0,
     "pocket": "R",
     "avatar": "data:image/png;base64,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"
@@ -14505,13 +14782,13 @@ start();
   "showAvatars": true,
   "turns": {
     "enabled": false,
-    "active": "p1"
+    "active": "p2"
   },
   "modality": "ONE POCKET",
   "race": "RACE TO 3",
   "timer": {
     "enabled": false,
-    "seconds": 30,
+    "seconds": 26.5,
     "maxSeconds": 30,
     "running": false,
     "customInput": 30
@@ -14532,11 +14809,18 @@ start();
         "text": "PRUEBA DE AVISO",
         "logoUrl": "",
         "active": true
+      },
+      {
+        "id": 1792758963666,
+        "type": "sponsor",
+        "text": "ESTEVEMATACUSTOM",
+        "logoUrl": "",
+        "active": true
       }
     ]
   },
   "uiScale": {
-    "hud": 1.5,
+    "hud": 1.15,
     "ticker": 1.35
   }
 }

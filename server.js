@@ -86,7 +86,7 @@ function runFFmpegRender(payload, wsClient) {
   let inputIdx = 1;
 
   let filterComplex = [];
-  filterComplex.push(`[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[v_base]`);
+  filterComplex.push(`[0:v]scale=1920:1080,setsar=1[v_base]`);
   let currentVideoOutput = 'v_base';
 
   /* 1. HUD */
@@ -264,7 +264,7 @@ function runFFmpegRender(payload, wsClient) {
     '-map', '[aout]',
     '-c:v', 'libx264',
     '-preset', 'fast',
-    '-crf', '17',
+    '-crf', '22',
     '-tune', 'film',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
