@@ -70,6 +70,9 @@
     }, cfg.delay);
   }
 
+  let lastTriggerTime = 0;
+  let lastTriggerKey = '';
+
   $: if ($liveEffect) {
     handleTrigger($liveEffect);
   }
@@ -77,13 +80,21 @@
   function handleTrigger(data) {
     if (!data) return;
 
+    // Evitar que el efecto se dispare 2 veces seguidas
+    const now = Date.now();
+    if (data.effect === lastTriggerKey && now - lastTriggerTime < 320) {
+      return;
+    }
+    lastTriggerTime = now;
+    lastTriggerKey = data.effect;
+
     const isMuted = data.soundEnabled === false;
     playSound(data.effect, isMuted);
 
     if (data.effect === 'confetti') {
       const isP1 = data.playerKey === 'p1';
       const confettiInstance = customCanvas 
-        ? confetti.create(customCanvas, { resize: true, useWorker: false })
+        ? confetti.create(customCanvas, { resize: false, useWorker: false })
         : confetti;
 
       confettiInstance({
@@ -124,7 +135,6 @@
 </script>
 
 <div class="fixed inset-0 pointer-events-none z-50 overflow-hidden select-none">
-  
   <!-- JUGADOR 1 -->
   <div class="fixed bottom-20 left-8 flex flex-col items-start pointer-events-none">
     {#each alertsP1 as alert (alert.id)}
@@ -156,5 +166,4 @@
       </div>
     {/each}
   </div>
-
 </div>

@@ -23,7 +23,7 @@
   background: linear-gradient(180deg, #10131a 0%, #08090d 100%);
 }
 
-/* Ocultar flechas feas de inputs numéricos en Chrome, Safari, Edge y Firefox */
+/* Ocultar flechas de inputs numéricos */
 input[type=number]::-webkit-inner-spin-button, 
 input[type=number]::-webkit-outer-spin-button { 
   -webkit-appearance: none; 
@@ -31,4 +31,76 @@ input[type=number]::-webkit-outer-spin-button {
 }
 input[type=number] {
   -moz-appearance: textfield;
+}
+
+/* ========================================================
+   TOOLTIPS ESTILIZADOS DARK GOLD SIN DESBORDAMIENTOS
+======================================================== */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  padding: 4px 8px;
+  background: #0d0f17;
+  color: #fbc02d;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  max-width: 240px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+}
+
+[data-tip]::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  border: 4px solid transparent;
+  border-top-color: #fbc02d;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+}
+
+[data-tip]:hover::after,
+[data-tip]:hover::before {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Variante hacia abajo */
+[data-tip-pos="down"]::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  transform: translateX(-50%) translateY(-3px);
+}
+[data-tip-pos="down"]::before {
+  bottom: auto;
+  top: calc(100% + 1px);
+  border-top-color: transparent;
+  border-bottom-color: #fbc02d;
+  transform: translateX(-50%) translateY(-3px);
+}
+[data-tip-pos="down"]:hover::after,
+[data-tip-pos="down"]:hover::before {
+  transform: translateX(-50%) translateY(0);
 }

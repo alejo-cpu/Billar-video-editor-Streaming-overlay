@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { studioStore } from '../../stores/studioStore.js';
   import StudioScoreboard from './StudioScoreboard.svelte';
   import StudioTicker from './StudioTicker.svelte';
@@ -11,14 +11,17 @@
   import {
     Play, Pause, Upload, Trash2, Volume2, VolumeX, Download, Clock,
     Music, Film, Sparkles, Maximize, Minimize, ToggleLeft,
-    ToggleRight, UserCheck, ArrowLeftRight, Sliders, Image, Eye, EyeOff, X, Plus, Image as ImageIcon
+    ToggleRight, UserCheck, ArrowLeftRight, Sliders, Eye, EyeOff, X, Plus,
+    ArrowUp, ArrowDown, ListMusic, Video, Shuffle, FolderOpen,
+    ChevronDown, ChevronUp, ImagePlus, Disc, Image as ImageIcon
   } from 'lucide-svelte';
 
   let videoContainer;
   let videoElement;
   let bgAudioElement;
   let fileInput;
-  let musicInput;
+  let musicFilesInput;
+  let musicFolderInput;
   let confettiCanvas;
   let isFullscreen = false;
   let renderWs = null;
@@ -28,9 +31,47 @@
   let showCropModalP1 = false;
   let showCropModalP2 = false;
 
+  let videoAspectCss = '16 / 9';
+  let previewScale = 1;
+  let resizeObserver = null;
+
+  let showControls = true;
+  let hideControlsTimer = null;
+
+  let isPlaylistExpanded = false;
+  let isKeyframesExpanded = false;
+
+  /* ==================== CONTROL DE AUDIO ==================== */
+  let videoAudioSettings = {
+    volume: 1.0,
+    muted: false
+  };
+
+  let bgSettings = {
+    volume: 0.35,
+    loop: true,
+    shuffle: false,
+    fadeIn: true,
+    fadeOut: true
+  };
+
+  let bgPlaylist = []; // [{ id, name, file, url, duration }]
+  let manualPlayingId = null; // ID de la canción que se está preescuchando
+
   const DEFAULT_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%231a1d26"/><circle cx="50" cy="38" r="19" fill="%234b5563"/><path d="M18,92 C18,68 32,62 50,62 C68,62 82,68 82,92 Z" fill="%234b5563"/></svg>`;
 
-  /* ==================== ESTADO 100% AISLADO DE STUDIO ==================== */
+  const EMOJI_REACTIONS = [
+    { key: 'confetti', icon: '🎉', img: '/stickers/confetti.webp' },
+    { key: 'fire', icon: '🔥', img: '/stickers/fire.webp' },
+    { key: 'wink', icon: '😉', img: '/stickers/wink.webp' },
+    { key: 'sunglasses', icon: '😎', img: '/stickers/sunglasses.webp' },
+    { key: 'clap', icon: '👏', img: '/stickers/clap.webp' },
+    { key: 'target', icon: '🎯', img: '/stickers/target.webp' },
+    { key: 'crown', icon: '👑', img: '/stickers/crown.webp' },
+    { key: 'ball8', icon: '🎱', img: '/stickers/ball8.webp' }
+  ];
+
+  /* ==================== ESTADO AISLADO ==================== */
   const STUDIO_KEY = 'billiards_studio_config_v5';
   const savedStudio = typeof localStorage !== 'undefined' ? localStorage.getItem(STUDIO_KEY) : null;
   
@@ -57,49 +98,305 @@
     }
   }
 
-  /* GRABACIÓN REAL DE CANVAS-CONFETTI EN WEBM TRANSPARENTE (80KB - 100% IDÉNTICO A OVERLAY) */
+  function updateVideoAspect() {
+    if (videoElement && videoElement.videoWidth && videoElement.videoHeight) {
+      videoAspectCss = `${videoElement.videoWidth} / ${videoElement.videoHeight}`;
+    }
+  }
+
+  function updatePreviewScale() {
+    if (videoContainer) {
+      const w = videoContainer.clientWidth;
+      if (w > 0) {
+        previewScale = w / 1920;
+      }
+    }
+  }
+
+  function resetControlsTimeout() {
+    showControls = true;
+    if (hideControlsTimer) clearTimeout(hideControlsTimer);
+    if (isFullscreen && isPlaying) {
+      hideControlsTimer = setTimeout(() => {
+        showControls = false;
+      }, 2500);
+    }
+  }
+
+  function handleKeyDown(e) {
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) {
+      return;
+    }
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      togglePlay();
+    } else if (e.code === 'ArrowRight') {
+      e.preventDefault();
+      seek(currentTime + 5);
+    } else if (e.code === 'ArrowLeft') {
+      e.preventDefault();
+      seek(currentTime - 5);
+    }
+  }
+
+  /* GESTIÓN DE CARGA DE CANCIONES */
+  function handleMusicUpload(e) {
+    const files = Array.from(e.target.files || []).filter(f => {
+      return f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(f.name);
+    });
+    if (!files.length) return;
+
+    const newTracks = files.map(file => {
+      const url = URL.createObjectURL(file);
+      return {
+        id: Date.now() + Math.random(),
+        name: file.name.replace(/\.[^/.]+$/, ''),
+        file,
+        url,
+        duration: 180
+      };
+    });
+
+    bgPlaylist = [...bgPlaylist, ...newTracks];
+
+    newTracks.forEach(track => {
+      const a = new Audio(track.url);
+      a.onloadedmetadata = () => {
+        if (Number.isFinite(a.duration) && a.duration > 0) {
+          track.duration = Math.round(a.duration);
+          bgPlaylist = [...bgPlaylist];
+        }
+      };
+    });
+
+    e.target.value = '';
+  }
+
+  function moveSong(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= bgPlaylist.length) return;
+    const item = bgPlaylist[index];
+    const newArr = [...bgPlaylist];
+    newArr.splice(index, 1);
+    newArr.splice(target, 0, item);
+    bgPlaylist = newArr;
+  }
+
+  function removeSong(id) {
+    bgPlaylist = bgPlaylist.filter(s => s.id !== id);
+    if (manualPlayingId === id && bgAudioElement) {
+      bgAudioElement.pause();
+      manualPlayingId = null;
+    }
+  }
+
+  function clearPlaylist() {
+    bgPlaylist = [];
+    if (bgAudioElement) {
+      bgAudioElement.pause();
+      bgAudioElement.src = '';
+      manualPlayingId = null;
+    }
+  }
+
+  /* REPRODUCIR / PAUSAR CANCIÓN INDIVIDUAL */
+  function togglePlaySong(song) {
+    if (!bgAudioElement) return;
+
+    if (manualPlayingId === song.id && !bgAudioElement.paused) {
+      bgAudioElement.pause();
+      manualPlayingId = null;
+    } else {
+      manualPlayingId = song.id;
+      bgAudioElement.src = song.url;
+      bgAudioElement.currentTime = 0;
+      bgAudioElement.volume = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
+      bgAudioElement.play().catch(() => {});
+    }
+  }
+
+  /* ALEATORIO ANTI-REPETICIÓN VISIBLE */
+  function shuffleVisiblePlaylist() {
+    if (bgPlaylist.length <= 2) return;
+
+    const copy = [...bgPlaylist];
+    const shuffled = [];
+    const history = [];
+
+    while (copy.length > 0) {
+      let candidates = copy.filter(s => !history.includes(s.id));
+      if (candidates.length === 0) candidates = copy;
+
+      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+      shuffled.push(chosen);
+      history.push(chosen.id);
+      if (history.length > 2) history.shift();
+
+      const idx = copy.findIndex(s => s.id === chosen.id);
+      copy.splice(idx, 1);
+    }
+
+    bgPlaylist = shuffled;
+  }
+
+  function toggleShuffle() {
+    bgSettings.shuffle = !bgSettings.shuffle;
+    if (bgSettings.shuffle) {
+      shuffleVisiblePlaylist();
+    }
+  }
+
+  /* CONTROL DE VOLÚMENES INDEPENDIENTES */
+  $: if (bgAudioElement) {
+    bgAudioElement.volume = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
+  }
+
+  $: if (videoElement) {
+    videoElement.volume = Math.max(0, Math.min(1.0, videoAudioSettings.volume ?? 1.0));
+    videoElement.muted = videoAudioSettings.muted;
+  }
+
+  /* SINCRONIZACIÓN CON EL VÍDEO (SOLO SI EL VÍDEO ESTÁ EN PLAY) */
+  function syncPlaylistAudio(t, playing) {
+    if (!bgAudioElement || !bgPlaylist.length) return;
+
+    // Si el vídeo no se está reproduciendo, NO interrumpir preescuchas manuales
+    if (!playing) {
+      if (!manualPlayingId && !bgAudioElement.paused) {
+        bgAudioElement.pause();
+      }
+      return;
+    }
+
+    manualPlayingId = null;
+    const totalDur = bgPlaylist.reduce((acc, s) => acc + (s.duration || 120), 0);
+    if (totalDur <= 0) return;
+
+    let timeInPlaylist = Math.max(0, t);
+    if (bgSettings.loop) {
+      timeInPlaylist = timeInPlaylist % totalDur;
+    } else if (timeInPlaylist >= totalDur) {
+      bgAudioElement.pause();
+      return;
+    }
+
+    let accumulated = 0;
+    let targetSong = bgPlaylist[0];
+    let offsetInSong = 0;
+
+    for (let i = 0; i < bgPlaylist.length; i++) {
+      const s = bgPlaylist[i];
+      const sDur = s.duration || 120;
+      if (timeInPlaylist >= accumulated && timeInPlaylist < accumulated + sDur) {
+        targetSong = s;
+        offsetInSong = timeInPlaylist - accumulated;
+        break;
+      }
+      accumulated += sDur;
+    }
+
+    if (!targetSong) return;
+
+    if (bgAudioElement.src !== targetSong.url) {
+      bgAudioElement.src = targetSong.url;
+      if (Number.isFinite(offsetInSong) && offsetInSong >= 0) {
+        bgAudioElement.currentTime = offsetInSong;
+      }
+      bgAudioElement.play().catch(() => {});
+    } else {
+      if (Number.isFinite(offsetInSong) && Math.abs(bgAudioElement.currentTime - offsetInSong) > 0.4) {
+        try {
+          bgAudioElement.currentTime = Math.max(0, offsetInSong);
+        } catch (e) {}
+      }
+      if (bgAudioElement.paused) {
+        bgAudioElement.play().catch(() => {});
+      }
+    }
+  }
+
+  $: syncPlaylistAudio(currentTime, isPlaying);
+
+  function getSupportedVideoMimeType() {
+    if (typeof MediaRecorder === 'undefined') return null;
+    const candidates = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+      'video/mp4'
+    ];
+    for (const t of candidates) {
+      if (MediaRecorder.isTypeSupported(t)) return t;
+    }
+    return '';
+  }
+
   function recordSingleConfettiWebm(isP1) {
-    return new Promise((resolve) => {
-      const c = document.createElement('canvas');
-      c.width = 1280;
-      c.height = 720;
-      c.style.position = 'fixed';
-      c.style.opacity = '0';
-      c.style.pointerEvents = 'none';
-      document.body.appendChild(c);
+    return new Promise((resolve, reject) => {
+      try {
+        const mimeType = getSupportedVideoMimeType();
+        if (mimeType === null) {
+          return reject(new Error('MediaRecorder no compatible'));
+        }
 
-      const myConfetti = confetti.create(c, { resize: false, useWorker: false });
-      const stream = c.captureStream(30);
-      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
-      const chunks = [];
+        const c = document.createElement('canvas');
+        c.width = 1920;
+        c.height = 1080;
+        c.style.position = 'fixed';
+        c.style.opacity = '0';
+        c.style.pointerEvents = 'none';
+        document.body.appendChild(c);
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
+        const myConfetti = confetti.create(c, { resize: false, useWorker: false });
+        const stream = c.captureStream ? c.captureStream(30) : null;
+        if (!stream) {
+          document.body.removeChild(c);
+          return reject(new Error('captureStream no disponible'));
+        }
 
-      recorder.onstop = () => {
-        document.body.removeChild(c);
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        resolve(blob);
-      };
+        const options = mimeType ? { mimeType } : {};
+        const recorder = new MediaRecorder(stream, options);
+        const chunks = [];
 
-      recorder.start();
-      // Parámetros idénticos de EffectsLayer.svelte
-      myConfetti({
-        particleCount: 100,
-        angle: isP1 ? 52 : 128,
-        spread: 75,
-        startVelocity: 55,
-        gravity: 1.25,
-        origin: { x: isP1 ? 0.04 : 0.96, y: 0.92 },
-        colors: ['#f59e0b', '#fbbf24', '#ffffff', '#10b981', '#3b82f6'],
-        ticks: 95,
-        decay: 0.92
-      });
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
 
-      setTimeout(() => {
-        try { recorder.stop(); } catch (e) {}
-      }, 2100);
+        recorder.onstop = () => {
+          try { document.body.removeChild(c); } catch (e) {}
+          const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
+          resolve(blob);
+        };
+
+        recorder.onerror = (e) => {
+          try { document.body.removeChild(c); } catch (err) {}
+          reject(e);
+        };
+
+        recorder.start();
+
+        myConfetti({
+          particleCount: 100,
+          angle: isP1 ? 52 : 128,
+          spread: 75,
+          startVelocity: 55,
+          gravity: 1.25,
+          origin: { x: isP1 ? 0.04 : 0.96, y: 0.92 },
+          colors: ['#f59e0b', '#fbbf24', '#ffffff', '#10b981', '#3b82f6'],
+          ticks: 95,
+          decay: 0.92
+        });
+
+        setTimeout(() => {
+          try {
+            if (recorder.state !== 'inactive') recorder.stop();
+          } catch (e) {}
+        }, 2200);
+      } catch (err) {
+        reject(err);
+      }
     });
   }
 
@@ -109,20 +406,39 @@
       const data = await res.json();
       if (data.ready) return;
 
-      console.log('🎉 Grabando confeti real de canvas-confetti en WebM...');
       const blobP1 = await recordSingleConfettiWebm(true);
       await fetch('/api/upload-confetti-webm?player=p1', { method: 'POST', body: blobP1 });
 
       const blobP2 = await recordSingleConfettiWebm(false);
       await fetch('/api/upload-confetti-webm?player=p2', { method: 'POST', body: blobP2 });
-      console.log('✅ Confeti WebM transparente listo para FFmpeg');
-    } catch (e) {
-      console.warn('Nota: Generación de confeti WebM:', e);
-    }
+    } catch (e) {}
   }
 
   onMount(() => {
     checkAndRecordTrueConfetti();
+    window.addEventListener('keydown', handleKeyDown);
+
+    if (videoContainer) {
+      resizeObserver = new ResizeObserver(() => {
+        updatePreviewScale();
+      });
+      resizeObserver.observe(videoContainer);
+      updatePreviewScale();
+    }
+
+    const onFullscreenChange = () => {
+      isFullscreen = !!document.fullscreenElement;
+      resetControlsTimeout();
+      setTimeout(updatePreviewScale, 50);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      if (resizeObserver) resizeObserver.disconnect();
+      if (hideControlsTimer) clearTimeout(hideControlsTimer);
+    };
   });
 
   $: videoUrl = $studioStore.videoUrl;
@@ -130,8 +446,14 @@
   $: duration = $studioStore.duration;
   $: isPlaying = $studioStore.isPlaying;
   $: keyframes = $studioStore.keyframes;
-  $: bgMusic = $studioStore.bgMusic;
   $: renderProgress = $studioStore.renderProgress;
+
+  $: if (isPlaying) {
+    resetControlsTimeout();
+  } else {
+    showControls = true;
+    if (hideControlsTimer) clearTimeout(hideControlsTimer);
+  }
 
   function playClickAudio(type) {
     try {
@@ -148,7 +470,7 @@
     } catch (e) {}
   }
 
-  /* ==================== CÁLCULO LOCAL DE TIMELINE ==================== */
+  /* ==================== TIMELINE ==================== */
   $: activeState = (() => {
     let state = {
       p1: { ...studioConfig.p1, balls: 0, games: 0 },
@@ -191,7 +513,6 @@
     return state;
   })();
 
-  /* ==================== SINCRONIZACIÓN DE SONIDO ==================== */
   let lastCheckedTime = 0;
   $: {
     if (isPlaying && Math.abs(currentTime - lastCheckedTime) > 0.08) {
@@ -216,22 +537,9 @@
     }
   }
 
-  /* ==================== MÚSICA EN PREVIEW ==================== */
-  $: if (bgAudioElement && bgMusic.url) {
-    bgAudioElement.volume = bgMusic.volume;
-    bgAudioElement.loop = bgMusic.loop;
-    if (isPlaying && bgAudioElement.paused) bgAudioElement.play().catch(() => {});
-    else if (!isPlaying && !bgAudioElement.paused) bgAudioElement.pause();
-  }
-
   function handleVideoUpload(e) {
     const file = e.target.files?.[0] || e.dataTransfer?.files?.[0];
     if (file) studioStore.setVideo(file);
-  }
-
-  function handleMusicUpload(e) {
-    const file = e.target.files?.[0];
-    if (file) studioStore.setBgMusicFile(file);
   }
 
   function togglePlay() {
@@ -247,8 +555,9 @@
 
   function seek(t) {
     if (!videoElement) return;
-    videoElement.currentTime = Math.max(0, Math.min(duration, t));
-    studioStore.setTime(videoElement.currentTime);
+    const safeT = Math.max(0, Math.min(duration || 0, t));
+    videoElement.currentTime = safeT;
+    studioStore.setTime(safeT);
   }
 
   function toggleFullscreen() {
@@ -270,7 +579,6 @@
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 
-  /* ==================== EVENTOS TIMELINE EN STUDIO ==================== */
   let soundToggle = true;
 
   function markBalls(playerKey, delta) {
@@ -297,7 +605,9 @@
     studioStore.addKeyframe(currentTime, 'toggleTurns', { enabled: nextEnabled }, false);
   }
 
+  /* REGISTRO DE EMOJI SIN DOBLE DISPARO */
   function markEffect(effect, playerKey) {
+    lastCheckedTime = currentTime; // Evita que el watcher vuelva a dispararlo en milisegundos
     studioStore.addKeyframe(currentTime, 'effect', { effect, playerKey }, soundToggle);
     liveEffect.set({ effect, playerKey, soundEnabled: soundToggle, id: Date.now() });
   }
@@ -306,11 +616,10 @@
     studioStore.addKeyframe(currentTime, 'toggleTicker', { visible }, false);
   }
 
-  /* GESTOR DE TICKER CON KEYFRAMES EN LÍNEA DE TIEMPO */
   let newTickerText = '';
   let newTickerType = 'sponsor';
   let newTickerLogo = '';
-  let logoMode = 'file';
+  let logoUploadTab = 'file';
 
   function handleTickerLogoFile(e) {
     const file = e.target.files?.[0];
@@ -352,7 +661,7 @@
   }
 
   function handleCancelRender() {
-    const ok = confirm('¿Estás seguro de que deseas cancelar el renderizado? Se detendrá el proceso y podrás seguir editando el video.');
+    const ok = confirm('¿Estás seguro de que deseas cancelar el renderizado?');
     if (!ok) return;
 
     if (renderWs && renderWs.readyState === WebSocket.OPEN) {
@@ -364,7 +673,33 @@
     studioStore.setRenderProgress({ active: false, percent: 0, fps: 0, eta: '', downloadUrl: null });
   }
 
-  /* ==================== CAPTURA RETINA 2X Y RENDERIZADO ==================== */
+  async function captureCleanPng(element, options = {}) {
+    let svgDataUrl = await htmlToImage.toSvg(element, options);
+    svgDataUrl = svgDataUrl.replace(/\b(width|height):\s*([0-9.]+)(?!px|%|em|rem|vw|vh)/gi, '$1: $2px');
+
+    const img = new window.Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = svgDataUrl;
+    });
+
+    const pixelRatio = options.pixelRatio || 1;
+    const w = Math.max(1, Math.round((options.width || element.offsetWidth || img.width) * pixelRatio));
+    const h = Math.max(1, Math.round((options.height || element.offsetHeight || img.height) * pixelRatio));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, w, h);
+
+    return canvas.toDataURL('image/png');
+  }
+
+  /* RENDER FINAL */
   let isUploadingForRender = false;
 
   async function triggerRender() {
@@ -382,7 +717,6 @@
         await document.fonts.ready;
       }
 
-      // 1. CAPTURAR MARCADOR EN RESOLUCIÓN RETINA 2X
       const scoreEvents = keyframes.filter(k => 
         k.actionType === 'adjustBalls' || k.actionType === 'adjustGames' || k.actionType === 'setPocket' || k.actionType === 'switchTurn'
       );
@@ -395,7 +729,7 @@
         seek(tStart + 0.02);
         await new Promise(r => setTimeout(r, 60));
 
-        const dataUrl = await htmlToImage.toPng(hudCard, {
+        const dataUrl = await captureCleanPng(hudCard, {
           pixelRatio: 2,
           skipFonts: true
         });
@@ -407,7 +741,6 @@
         });
       }
 
-      // 2. CAPTURAR INTERVALOS DE CINTA INFERIOR
       const tickerEvents = keyframes.filter(k => k.actionType === 'setTickerItems' || k.actionType === 'toggleTicker');
       const sortedTickerTimes = [0, ...tickerEvents.map(k => k.time), duration].sort((a,b)=>a-b);
       const uniqueTickerTimes = [...new Set(sortedTickerTimes)];
@@ -420,7 +753,7 @@
 
         if (activeState.ticker.visible && activeState.ticker.items.some(it => it.active) && tickSegment) {
           try {
-            const dataUrl = await htmlToImage.toPng(tickSegment, {
+            const dataUrl = await captureCleanPng(tickSegment, {
               pixelRatio: 1,
               skipFonts: true
             });
@@ -448,20 +781,24 @@
       });
       const videoData = await resVideo.json();
 
-      let bgMusicFileName = null;
-      if ($studioStore.bgMusic.file) {
+      const uploadedPlaylist = [];
+      for (const song of bgPlaylist) {
         const resMusic = await fetch('/api/upload-media', {
           method: 'POST',
-          headers: { 'x-file-name': encodeURIComponent($studioStore.bgMusic.file.name) },
-          body: $studioStore.bgMusic.file
+          headers: { 'x-file-name': encodeURIComponent(song.file.name) },
+          body: song.file
         });
         const musicData = await resMusic.json();
-        bgMusicFileName = musicData.filename;
+        uploadedPlaylist.push({
+          filename: musicData.filename,
+          duration: song.duration
+        });
       }
 
       isUploadingForRender = false;
 
-      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'; ws = new WebSocket(`ws://${host}:3001`);
+      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
+      const ws = new WebSocket(`ws://${host}:3001`);
       renderWs = ws;
 
       ws.onopen = () => {
@@ -470,10 +807,11 @@
           type: 'START_RENDER',
           payload: {
             videoFileName: videoData.filename,
-            bgMusicFileName,
             events: keyframes,
             duration,
-            bgSettings: bgMusic,
+            bgSettings,
+            bgPlaylist: uploadedPlaylist,
+            videoAudioSettings,
             hudSnapshots,
             tickerSnapshots
           }
@@ -537,14 +875,23 @@
     </div>
   </header>
 
-  <main class="flex-1 grid grid-cols-[1fr_360px] gap-4 p-4 overflow-hidden">
+  <main class="flex-1 grid grid-cols-[1fr_400px] gap-4 p-4 overflow-hidden">
     
     <div class="flex flex-col gap-3 min-w-0">
       
-      <!-- REPRODUCTOR COMPACTO Y GENEROSO -->
+      <!-- REPRODUCTOR MÁS ALTO (68vh), CENTRADO Y SIN BARRAS NEGRAS -->
       <div 
         bind:this={videoContainer}
-        class="relative aspect-[16/9] w-full max-h-[54vh] bg-black rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center shadow-2xl group [transform:translateZ(0)]"
+        tabindex="0"
+        on:mousemove={resetControlsTimeout}
+        class="relative bg-black rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center shadow-2xl group [transform:translateZ(0)] mx-auto w-full outline-none
+          {isFullscreen && !showControls ? 'cursor-none' : ''}"
+        style="
+          height: 68vh;
+          max-height: 68vh;
+          aspect-ratio: {videoAspectCss};
+          max-width: calc(68vh * ({videoAspectCss}));
+        "
         on:dragover|preventDefault
         on:drop|preventDefault={handleVideoUpload}
       >
@@ -552,12 +899,25 @@
           <video
             bind:this={videoElement}
             src={videoUrl}
-            class="w-full h-full object-contain"
+            class="w-full h-full object-cover"
             on:timeupdate={() => studioStore.setTime(videoElement.currentTime)}
-            on:loadedmetadata={() => studioStore.setDuration(videoElement.duration)}
+            on:loadedmetadata={() => {
+              studioStore.setDuration(videoElement.duration);
+              updateVideoAspect();
+              updatePreviewScale();
+            }}
           ></video>
 
-          <div class="video-overlay-wrapper absolute inset-0 pointer-events-none overflow-hidden">
+          <!-- OVERLAY PROPORCIONAL 1:1 -->
+          <div 
+            class="video-overlay-wrapper absolute top-0 left-0 pointer-events-none overflow-hidden origin-top-left"
+            style="
+              width: 1920px;
+              height: 1080px;
+              transform: scale({previewScale});
+              transform-origin: 0 0;
+            "
+          >
             <StudioScoreboard matchState={activeState} />
             <EffectsLayer customCanvas={confettiCanvas} />
             <StudioTicker 
@@ -567,17 +927,24 @@
             />
           </div>
 
-          <canvas bind:this={confettiCanvas} class="absolute inset-0 pointer-events-none z-40 w-full h-full"></canvas>
+          <canvas 
+            bind:this={confettiCanvas} 
+            width="1920" 
+            height="1080" 
+            class="absolute inset-0 pointer-events-none z-40 w-full h-full"
+          ></canvas>
 
-          <!-- CONTROLES INTEGRADOS EN VIDEO -->
-          <div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-3 flex flex-col gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50">
-            
+          <!-- CONTROLES INTEGRADOS -->
+          <div 
+            class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-3 flex flex-col gap-1.5 transition-opacity duration-300 z-50
+            {showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
+          >
             <div 
               class="relative w-full h-3 flex items-center cursor-pointer select-none"
               on:click={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const pos = (e.clientX - rect.left) / rect.width;
-                seek(pos * duration);
+                seek(pos * (duration || 0));
               }}
             >
               <div class="relative w-full h-1.5 bg-neutral-700/80 rounded-full overflow-hidden">
@@ -605,9 +972,12 @@
                 </div>
               </div>
 
-              <button on:click={toggleFullscreen} class="text-white hover:text-amber-400 transition">
-                {#if isFullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}
-              </button>
+              <div class="flex items-center gap-3">
+                <span class="hidden sm:inline text-[10px] text-neutral-400 font-mono">Espacio: Pausa | ← / →: ±5s</span>
+                <button on:click={toggleFullscreen} class="text-white hover:text-amber-400 transition">
+                  {#if isFullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}
+                </button>
+              </div>
             </div>
 
           </div>
@@ -626,9 +996,7 @@
           </div>
         {/if}
 
-        {#if bgMusic.url}
-          <audio bind:this={bgAudioElement} src={bgMusic.url}></audio>
-        {/if}
+        <audio bind:this={bgAudioElement}></audio>
       </div>
 
       <!-- PANEL DE CONTROL EN PESTAÑAS -->
@@ -704,14 +1072,26 @@
                 </div>
               </div>
 
-              <div class="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/5">
-                <button on:click={() => markEffect('confetti', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">🎉</button>
-                <button on:click={() => markEffect('fire', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">🔥</button>
-                <button on:click={() => markEffect('wink', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">😉</button>
-                <button on:click={() => markEffect('sunglasses', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">😎</button>
-                <button on:click={() => markEffect('clap', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">👏</button>
-                <button on:click={() => markEffect('target', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">🎯</button>
-                <button on:click={() => markEffect('crown', 'p1')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">👑</button>
+              <!-- BOTONES DE EMOJIS COMPACTOS CON PREVIEW ANIMADA MINIATURA SIN TEXTO -->
+              <div class="grid grid-cols-4 gap-1.5 mt-2.5 p-1.5 bg-[#08090d] rounded-xl border border-white/5">
+                {#each EMOJI_REACTIONS as item}
+                  <button
+                    on:click={() => markEffect(item.key, 'p1')}
+                    class="group/emo relative h-10 flex items-center justify-center rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-400 text-xl transition active:scale-90"
+                  >
+                    <span>{item.icon}</span>
+
+                    <!-- Miniatura flotante animada sin texto -->
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 p-1 bg-[#0c0e15] border border-amber-500/60 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.9)] opacity-0 group-hover/emo:opacity-100 pointer-events-none transition-all duration-150 z-50 flex items-center justify-center min-w-[46px] min-h-[46px]">
+                      {#if item.key === 'confetti'}
+                        <span class="text-2xl animate-bounce">🎉</span>
+                      {:else}
+                        <img src={item.img} alt="" class="w-9 h-9 object-contain" />
+                      {/if}
+                      <div class="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-4 border-transparent border-t-[#0c0e15]"></div>
+                    </div>
+                  </button>
+                {/each}
               </div>
             </div>
 
@@ -755,14 +1135,26 @@
                 </div>
               </div>
 
-              <div class="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/5">
-                <button on:click={() => markEffect('confetti', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">🎉</button>
-                <button on:click={() => markEffect('fire', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">🔥</button>
-                <button on:click={() => markEffect('wink', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">😉</button>
-                <button on:click={() => markEffect('sunglasses', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">😎</button>
-                <button on:click={() => markEffect('clap', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">👏</button>
-                <button on:click={() => markEffect('target', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">🎯</button>
-                <button on:click={() => markEffect('crown', 'p2')} class="p-1.5 bg-neutral-900 hover:bg-neutral-800 rounded-lg text-base">👑</button>
+              <!-- BOTONES DE EMOJIS COMPACTOS CON PREVIEW ANIMADA MINIATURA SIN TEXTO -->
+              <div class="grid grid-cols-4 gap-1.5 mt-2.5 p-1.5 bg-[#08090d] rounded-xl border border-white/5">
+                {#each EMOJI_REACTIONS as item}
+                  <button
+                    on:click={() => markEffect(item.key, 'p2')}
+                    class="group/emo relative h-10 flex items-center justify-center rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-400 text-xl transition active:scale-90"
+                  >
+                    <span>{item.icon}</span>
+
+                    <!-- Miniatura flotante animada sin texto -->
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 p-1 bg-[#0c0e15] border border-amber-500/60 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.9)] opacity-0 group-hover/emo:opacity-100 pointer-events-none transition-all duration-150 z-50 flex items-center justify-center min-w-[46px] min-h-[46px]">
+                      {#if item.key === 'confetti'}
+                        <span class="text-2xl animate-bounce">🎉</span>
+                      {:else}
+                        <img src={item.img} alt="" class="w-9 h-9 object-contain" />
+                      {/if}
+                      <div class="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-4 border-transparent border-t-[#0c0e15]"></div>
+                    </div>
+                  </button>
+                {/each}
               </div>
             </div>
 
@@ -788,7 +1180,7 @@
               on:click={() => { studioConfig.showAvatars = !studioConfig.showAvatars; persistStudio(); }}
               class="px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition {studioConfig.showAvatars ? 'bg-neutral-800 border-neutral-700 text-white' : 'bg-neutral-900 border-neutral-800 text-neutral-500'}"
             >
-              <Image size={14} class={studioConfig.showAvatars ? 'text-amber-400' : 'text-neutral-500'} />
+              <ImageIcon size={14} class={studioConfig.showAvatars ? 'text-amber-400' : 'text-neutral-500'} />
               Fotos: {studioConfig.showAvatars ? 'ON' : 'OFF'}
             </button>
 
@@ -844,7 +1236,6 @@
           </div>
         {/if}
 
-        <!-- PESTAÑA SPONSORS COMPLETA -->
         {#if activeTab === 'sponsors'}
           <div class="flex flex-col gap-3">
             
@@ -865,7 +1256,8 @@
               </button>
             </div>
 
-            <div class="flex flex-col gap-2.5 bg-[#090b10] p-3 rounded-xl border border-white/5">
+            <div class="flex flex-col gap-3 bg-[#090b10] p-3.5 rounded-xl border border-white/5">
+              
               <div class="flex items-center gap-2">
                 <select
                   bind:value={newTickerType}
@@ -881,62 +1273,68 @@
                   type="text"
                   bind:value={newTickerText}
                   on:keydown={(e) => e.key === 'Enter' && addStudioTickerItem()}
-                  placeholder="Texto a mostrar desde este segundo..."
+                  placeholder="Escribe el texto de la marca o mensaje..."
                   class="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white px-3 py-2 outline-none font-mono focus:border-amber-500"
                 />
 
-                <button on:click={addStudioTickerItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center gap-1">
+                <button on:click={addStudioTickerItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center gap-1 shadow-md">
                   <Plus size={15} /> Añadir Aquí
                 </button>
               </div>
 
-              <div class="flex items-center gap-3 text-xs pt-1 border-t border-white/5">
-                <span class="text-neutral-400 flex items-center gap-1 text-[11px]"><ImageIcon size={13} /> Logo (opcional):</span>
-                
+              <div class="flex items-center justify-between bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs">
                 <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    on:click={() => logoMode = 'file'}
-                    class="text-[10px] px-2 py-0.5 rounded {logoMode === 'file' ? 'bg-neutral-700 text-white font-bold' : 'text-neutral-400'}"
-                  >
-                    Archivo
-                  </button>
-                  <button
-                    type="button"
-                    on:click={() => logoMode = 'url'}
-                    class="text-[10px] px-2 py-0.5 rounded {logoMode === 'url' ? 'bg-neutral-700 text-white font-bold' : 'text-neutral-400'}"
-                  >
-                    URL
-                  </button>
+                  <span class="text-neutral-400 font-bold flex items-center gap-1 text-[11px]"><ImagePlus size={14} class="text-amber-400" /> Logo (Opcional):</span>
+                  <div class="flex bg-neutral-900 p-0.5 rounded-lg border border-neutral-800">
+                    <button
+                      type="button"
+                      on:click={() => logoUploadTab = 'file'}
+                      class="text-[10px] px-2.5 py-1 rounded-md transition {logoUploadTab === 'file' ? 'bg-amber-500 text-black font-black' : 'text-neutral-400 hover:text-white'}"
+                    >
+                      Subir archivo
+                    </button>
+                    <button
+                      type="button"
+                      on:click={() => logoUploadTab = 'url'}
+                      class="text-[10px] px-2.5 py-1 rounded-md transition {logoUploadTab === 'url' ? 'bg-amber-500 text-black font-black' : 'text-neutral-400 hover:text-white'}"
+                    >
+                      Pegar URL
+                    </button>
+                  </div>
                 </div>
 
-                {#if logoMode === 'file'}
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    on:change={handleTickerLogoFile} 
-                    class="text-[11px] text-neutral-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[10px] file:bg-neutral-800 file:text-white cursor-pointer"
-                  />
-                {:else}
-                  <input
-                    type="text"
-                    bind:value={newTickerLogo}
-                    placeholder="https://ejemplo.com/logo.png"
-                    class="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2.5 py-1 text-xs text-white outline-none font-mono"
-                  />
-                {/if}
+                <div class="flex items-center gap-2 flex-1 justify-end pl-3">
+                  {#if logoUploadTab === 'file'}
+                    <label class="cursor-pointer px-3 py-1 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 text-[11px] font-bold rounded-lg transition flex items-center gap-1.5">
+                      <Upload size={12} class="text-amber-400" />
+                      <span>{newTickerLogo ? 'Cambiar archivo' : 'Seleccionar imagen'}</span>
+                      <input type="file" accept="image/*" on:change={handleTickerLogoFile} class="hidden" />
+                    </label>
+                  {:else}
+                    <input
+                      type="text"
+                      bind:value={newTickerLogo}
+                      placeholder="https://ejemplo.com/logo.png"
+                      class="flex-1 max-w-[200px] bg-neutral-900 border border-neutral-700 rounded-lg px-2.5 py-1 text-xs text-white outline-none font-mono"
+                    />
+                  {/if}
 
-                {#if newTickerLogo}
-                  <div class="flex items-center gap-1.5 bg-neutral-800 px-2 py-0.5 rounded">
-                    <img src={newTickerLogo} alt="preview" class="h-4 w-6 object-contain" />
-                    <span class="text-[10px] text-emerald-400 font-bold">Cargado</span>
-                  </div>
-                {/if}
+                  {#if newTickerLogo}
+                    <div class="flex items-center gap-1.5 bg-neutral-800 px-2 py-1 rounded-lg border border-amber-500/40">
+                      <img src={newTickerLogo} alt="preview" class="h-4 w-6 object-contain" />
+                      <button on:click={() => newTickerLogo = ''} class="text-neutral-400 hover:text-rose-400" title="Quitar logo">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+
               </div>
+
             </div>
 
             <div class="flex items-center justify-between text-[11px] text-neutral-400 px-1 pt-1">
-              <span>Marcas en este segundo ({formatTime(currentTime)}):</span>
+              <span>Marcas activas en este segundo ({formatTime(currentTime)}):</span>
               <span class="text-amber-400 font-mono">Modificar aquí crea un punto en el tiempo</span>
             </div>
 
@@ -953,10 +1351,10 @@
                     <span class="text-xs font-mono font-bold text-white truncate max-w-[150px]">{item.text}</span>
                   </div>
                   <div class="flex items-center gap-1 shrink-0">
-                    <button on:click={() => toggleStudioTickerItem(item.id)} class="p-1 hover:text-white text-neutral-400 transition" title={item.active ? 'Desactivar en este segundo' : 'Activar en este segundo'}>
+                    <button on:click={() => toggleStudioTickerItem(item.id)} class="p-1 hover:text-white text-neutral-400 transition" title={item.active ? 'Ocultar marca' : 'Activar marca'}>
                       {#if item.active}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
                     </button>
-                    <button on:click={() => removeStudioTickerItem(item.id)} class="p-1 hover:text-rose-400 text-neutral-500 transition" title="Eliminar desde este segundo">
+                    <button on:click={() => removeStudioTickerItem(item.id)} class="p-1 hover:text-rose-400 text-neutral-500 transition" title="Eliminar marca">
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -971,53 +1369,177 @@
 
     </div>
 
-    <!-- COLUMNA DERECHA: TIMELINE + MÚSICA -->
+    <!-- COLUMNA DERECHA: AUDIO, PLAYLIST Y TIMELINE -->
     <div class="bg-[#0c0e15] border border-white/10 rounded-2xl p-4 flex flex-col gap-4 overflow-hidden shadow-xl">
       
-      <!-- MÚSICA DE FONDO -->
+      <!-- 1. AUDIO ORIGINAL DEL VÍDEO -->
+      <div class="border-b border-white/10 pb-3 flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-mono font-bold text-neutral-300 flex items-center gap-1.5">
+            <Video size={15} class="text-amber-400" /> Audio Original del Vídeo
+          </span>
+          <button
+            on:click={() => videoAudioSettings.muted = !videoAudioSettings.muted}
+            class="px-2.5 py-1 rounded-lg text-[10px] font-bold border transition flex items-center gap-1
+              {videoAudioSettings.muted ? 'bg-neutral-900 border-neutral-700 text-neutral-400' : 'bg-emerald-950 border-emerald-500/50 text-emerald-300'}"
+          >
+            {#if videoAudioSettings.muted}
+              <VolumeX size={13} /> Mudo
+            {:else}
+              <Volume2 size={13} class="text-emerald-400" /> Activo
+            {/if}
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-mono text-neutral-400">Vol:</span>
+          <input
+            type="range" min="0" max="1" step="0.05"
+            bind:value={videoAudioSettings.volume}
+            disabled={videoAudioSettings.muted}
+            class="w-full accent-amber-500 h-1 bg-neutral-800 rounded disabled:opacity-40 cursor-pointer"
+          />
+          <span class="text-[10px] font-mono text-amber-400 w-8">{Math.round(videoAudioSettings.volume * 100)}%</span>
+        </div>
+      </div>
+
+      <!-- 2. PLAYLIST DE MÚSICA DE FONDO -->
       <div class="border-b border-white/10 pb-3 flex flex-col gap-2.5">
         <div class="flex items-center justify-between">
           <span class="text-xs font-mono font-bold text-neutral-300 flex items-center gap-1.5">
-            <Music size={14} class="text-amber-400" /> Música de Fondo
+            <ListMusic size={15} class="text-amber-400" /> Playlist ({bgPlaylist.length})
           </span>
-          <button
-            on:click={() => musicInput.click()}
-            class="text-[10px] font-bold px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/5"
-          >
-            {bgMusic.file ? 'Cambiar' : 'Subir MP3'}
-          </button>
-          <input bind:this={musicInput} type="file" accept="audio/*" on:change={handleMusicUpload} class="hidden" />
+          
+          <div class="flex items-center gap-1.5">
+            {#if bgPlaylist.length > 0}
+              <button
+                on:click={clearPlaylist}
+                class="text-[10px] text-rose-400 hover:text-rose-300 font-bold px-1.5 py-1"
+              >
+                Vaciar
+              </button>
+            {/if}
+            <button
+              on:click={() => musicFilesInput.click()}
+              class="text-[10px] font-bold px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1"
+            >
+              <Plus size={12} class="text-amber-400" /> Añadir canciones
+            </button>
+            <button
+              on:click={() => musicFolderInput.click()}
+              class="text-[10px] font-bold px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1"
+            >
+              <FolderOpen size={12} class="text-amber-400" /> Carpeta
+            </button>
+          </div>
+
+          <input bind:this={musicFilesInput} type="file" multiple accept="audio/*" on:change={handleMusicUpload} class="hidden" />
+          <input bind:this={musicFolderInput} type="file" webkitdirectory directory multiple on:change={handleMusicUpload} class="hidden" />
         </div>
 
-        {#if bgMusic.file}
+        {#if bgPlaylist.length > 0}
           <div class="flex items-center justify-between text-[11px] text-neutral-400">
             <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" checked={bgMusic.loop} on:change={(e) => studioStore.updateBgMusicSettings({ loop: e.target.checked })} class="accent-amber-500" />
-              <span>Bucle</span>
+              <input type="checkbox" bind:checked={bgSettings.loop} class="accent-amber-500" />
+              <span>Bucle Playlist</span>
+            </label>
+            <button
+              type="button"
+              on:click={toggleShuffle}
+              class="flex items-center gap-1.5 px-2 py-0.5 rounded-lg border transition {bgSettings.shuffle ? 'bg-amber-950/70 border-amber-500/60 text-amber-300 font-bold' : 'bg-neutral-900 border-neutral-800 text-neutral-400'}"
+            >
+              <Shuffle size={12} class={bgSettings.shuffle ? 'text-amber-400' : ''} />
+              <span>{bgSettings.shuffle ? 'Aleatorio ON' : 'Aleatorio OFF'}</span>
+            </button>
+            {#if bgSettings.shuffle}
+              <button
+                on:click={shuffleVisiblePlaylist}
+                class="text-[10px] text-amber-400 hover:underline font-bold"
+              >
+                Remezclar
+              </button>
+            {/if}
+          </div>
+
+          <div class="flex items-center justify-between text-[11px] text-neutral-400 pt-0.5">
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" bind:checked={bgSettings.fadeIn} class="accent-amber-500" />
+              <span>Fade In (3s)</span>
             </label>
             <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" checked={bgMusic.fadeIn} on:change={(e) => studioStore.updateBgMusicSettings({ fadeIn: e.target.checked })} class="accent-amber-500" />
-              <span>Fade In</span>
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" checked={bgMusic.fadeOut} on:change={(e) => studioStore.updateBgMusicSettings({ fadeOut: e.target.checked })} class="accent-amber-500" />
-              <span>Fade Out</span>
+              <input type="checkbox" bind:checked={bgSettings.fadeOut} class="accent-amber-500" />
+              <span>Fade Out (3s)</span>
             </label>
           </div>
+
           <div class="flex items-center gap-2">
             <span class="text-[10px] font-mono text-neutral-400">Vol:</span>
             <input
               type="range" min="0" max="1" step="0.05"
-              value={bgMusic.volume}
-              on:input={(e) => studioStore.updateBgMusicSettings({ volume: parseFloat(e.target.value) })}
-              class="w-full accent-amber-500 h-1 bg-neutral-800 rounded"
+              bind:value={bgSettings.volume}
+              class="w-full accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
             />
-            <span class="text-[10px] font-mono text-amber-400 w-7">{Math.round(bgMusic.volume * 100)}%</span>
+            <span class="text-[10px] font-mono text-amber-400 w-8">{Math.round(bgSettings.volume * 100)}%</span>
           </div>
+
+          <!-- LISTA ORDENABLE Y REPRODUCIBLE -->
+          <div class="flex flex-col gap-1.5 overflow-y-auto pr-1 bg-black/40 p-2 rounded-xl border border-white/5 transition-all duration-300 {isPlaylistExpanded ? 'max-h-72' : 'max-h-36'}">
+            {#each bgPlaylist as song, idx (song.id)}
+              <div class="flex items-center justify-between p-1.5 bg-neutral-900/80 rounded-lg text-xs font-mono border border-white/5 {manualPlayingId === song.id ? 'border-amber-500/70 bg-amber-950/40 shadow-sm' : ''}">
+                
+                <div class="flex items-center gap-2 truncate flex-1 min-w-0 pr-1">
+                  <!-- Botón Play/Pausa de cada canción -->
+                  <button
+                    type="button"
+                    on:click|stopPropagation={() => togglePlaySong(song)}
+                    class="p-1 rounded text-neutral-400 hover:text-amber-400 transition"
+                  >
+                    {#if manualPlayingId === song.id && bgAudioElement && !bgAudioElement.paused}
+                      <Pause size={13} class="text-amber-400 animate-pulse" />
+                    {:else}
+                      <Play size={13} />
+                    {/if}
+                  </button>
+
+                  <span class="text-amber-400 font-bold shrink-0">{idx + 1}.</span>
+                  <span class="truncate text-white text-[11px] {manualPlayingId === song.id ? 'font-bold text-amber-300' : ''}">{song.name}</span>
+                </div>
+
+                <div class="flex items-center gap-1 shrink-0">
+                  <button on:click={() => moveSong(idx, -1)} disabled={idx === 0} class="p-1 text-neutral-400 hover:text-white disabled:opacity-20">
+                    <ArrowUp size={12} />
+                  </button>
+                  <button on:click={() => moveSong(idx, 1)} disabled={idx === bgPlaylist.length - 1} class="p-1 text-neutral-400 hover:text-white disabled:opacity-20">
+                    <ArrowDown size={12} />
+                  </button>
+                  <button on:click={() => removeSong(song.id)} class="p-1 text-neutral-500 hover:text-rose-400">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+
+              </div>
+            {/each}
+          </div>
+
+          {#if bgPlaylist.length > 3}
+            <button
+              on:click={() => isPlaylistExpanded = !isPlaylistExpanded}
+              class="w-full py-1 text-[10px] font-bold text-neutral-400 hover:text-amber-400 flex items-center justify-center gap-1 bg-neutral-900/50 rounded-lg transition"
+            >
+              {#if isPlaylistExpanded}
+                <ChevronUp size={13} /> Contraer lista
+              {:else}
+                <ChevronDown size={13} /> Expandir lista ({bgPlaylist.length} canciones)
+              {/if}
+            </button>
+          {/if}
+
+        {:else}
+          <p class="text-[11px] text-neutral-500 italic text-center py-1">Sin música de fondo añadida.</p>
         {/if}
       </div>
 
-      <!-- SONIDO EN REACCIONES -->
+      <!-- 3. SONIDO EN REACCIONES -->
       <div class="flex items-center justify-between bg-black/30 p-2 rounded-xl text-xs">
         <span class="text-neutral-400">Sonido en reacciones:</span>
         <button
@@ -1028,15 +1550,15 @@
         </button>
       </div>
 
-      <!-- LISTA DE EVENTOS -->
+      <!-- 4. MARCAS DE LA LÍNEA DE TIEMPO (EXPANDIBLE) -->
       <div class="flex items-center justify-between border-b border-white/5 pb-1">
         <span class="text-xs font-mono font-bold text-neutral-400">Marcas ({keyframes.length})</span>
         {#if keyframes.length > 0}
-          <button on:click={() => studioStore.clearKeyframes()} class="text-[10px] text-rose-400 hover:text-rose-300">Borrar todas</button>
+          <button on:click={() => studioStore.clearKeyframes()} class="text-[10px] text-rose-400 hover:text-rose-300 font-bold">Borrar todas</button>
         {/if}
       </div>
 
-      <div class="flex-1 overflow-y-auto flex flex-col gap-1.5 pr-1 max-h-[360px]">
+      <div class="flex-1 overflow-y-auto flex flex-col gap-1.5 pr-1 transition-all duration-300 {isKeyframesExpanded ? 'max-h-[460px]' : 'max-h-[190px]'}">
         {#if keyframes.length === 0}
           <div class="flex flex-col items-center justify-center p-6 text-center text-neutral-500 text-xs">
             <span>No hay marcas aún.</span>
@@ -1075,7 +1597,6 @@
                 <button
                   on:click={() => studioStore.toggleKeyframeSound(kf.id)}
                   class="p-1 text-neutral-400 hover:text-white"
-                  title={kf.soundEnabled ? 'Con audio' : 'Mudo'}
                 >
                   {#if kf.soundEnabled}<Volume2 size={13} class="text-amber-400" />{:else}<VolumeX size={13} />{/if}
                 </button>
@@ -1087,6 +1608,19 @@
           </div>
         {/each}
       </div>
+
+      {#if keyframes.length > 5}
+        <button
+          on:click={() => isKeyframesExpanded = !isKeyframesExpanded}
+          class="w-full py-1 text-[10px] font-bold text-neutral-400 hover:text-amber-400 flex items-center justify-center gap-1 bg-neutral-900/50 rounded-lg transition"
+        >
+          {#if isKeyframesExpanded}
+            <ChevronUp size={13} /> Contraer marcas
+          {:else}
+            <ChevronDown size={13} /> Expandir marcas ({keyframes.length} registradas)
+          {/if}
+        </button>
+      {/if}
 
     </div>
 
@@ -1101,7 +1635,7 @@
           <div class="flex items-center gap-3">
             <Film size={22} class="text-amber-400 animate-pulse" />
             <h3 class="text-sm font-bold tracking-wide uppercase font-mono">
-              {isUploadingForRender ? 'Preparando video...' : 'Procesando con FFmpeg (Alta Definición)'}
+              {isUploadingForRender ? 'Preparando video y pistas de audio...' : 'Procesando con FFmpeg (Alta Definición)'}
             </h3>
           </div>
           <button
@@ -1146,7 +1680,7 @@
 
         <Sparkles size={32} class="text-amber-400" />
         <h3 class="text-base font-bold uppercase font-mono">¡Video Terminado con Éxito!</h3>
-        <p class="text-xs text-neutral-300">El archivo quedó listo en alta definición con el marcador Retina, la cinta inferior, confeti auténtico y audio combinados.</p>
+        <p class="text-xs text-neutral-300">El archivo quedó listo en alta definición con el marcador Retina, la cinta continua, confeti y audio combinados.</p>
         
         <div class="flex items-center gap-3 w-full justify-center pt-2">
           <a

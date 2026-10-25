@@ -1,0 +1,57 @@
+# ==========================================
+# DEPENDENCIAS
+# ==========================================
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================================
+# BUILDS Y TEMPORALES DE VITE
+# ==========================================
+dist/
+dist-ssr/
+*.local
+vite.config.js.timestamp*
+.svelte-kit/
+
+# ==========================================
+# RENDERS Y SUBIDAS TEMPORALES
+# (Evita subir gigas de videos y capturas)
+# ==========================================
+**/public/renders/*
+!**/public/renders/.gitkeep
+**/public/temp_uploads/*
+!**/public/temp_uploads/.gitkeep
+
+# ==========================================
+# ARCHIVOS COMPRIMIDOS Y REPORTES DE CÓDIGO
+# ==========================================
+*.zip
+*.tar.gz
+*.rar
+*.7z
+repomix-output.xml
+
+# Carpeta de música externa/descargas (si no quieres subirla a Git)
+musica/
+
+# Archivo residual creado por error de consola
+0
+
+# ==========================================
+# ARCHIVOS DE SISTEMA OPERATIVO Y EDITORES
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~

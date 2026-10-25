@@ -8,13 +8,13 @@
   $: loopBlock = (() => {
     if (activeItems.length === 0) return [];
     let list = [...activeItems];
-    while (list.length < 10) {
+    while (list.length < 16) {
       list = [...list, ...activeItems];
     }
     return list;
   })();
 
-  $: durationSeconds = Math.max(25, loopBlock.length * 4);
+  $: durationSeconds = Math.max(20, loopBlock.length * 3.0);
 </script>
 
 <style>
@@ -37,7 +37,7 @@
     flex-shrink: 0;
     will-change: transform;
     transform: translateZ(0);
-    animation: infiniteScroll var(--duration, 40s) linear infinite;
+    animation: infiniteScroll var(--duration, 35s) linear infinite;
   }
 </style>
 
@@ -49,7 +49,6 @@
     
     <div class="studio-marquee-track" style="--duration: {durationSeconds}s;">
       
-      <!-- SEGMENTO 1 CON ALTURA COMPLETA (EVITA TEXTOS GIGANTES) -->
       <div class="studio-marquee-segment">
         {#each loopBlock as item}
           <div class="flex items-center gap-3 pr-12 shrink-0 font-mono text-sm uppercase">
@@ -76,7 +75,6 @@
         {/each}
       </div>
 
-      <!-- SEGMENTO 2 -->
       <div class="studio-marquee-segment" aria-hidden="true">
         {#each loopBlock as item}
           <div class="flex items-center gap-3 pr-12 shrink-0 font-mono text-sm uppercase">

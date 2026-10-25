@@ -1,13 +1,11 @@
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import ffmpegPath from 'ffmpeg-static';
-
-const FFMPEG_BIN = ffmpegPath || 'ffmpeg';
 
 const STATE_FILE = 'state.json';
 const RENDERS_DIR = path.resolve('public/renders');
@@ -59,10 +57,15 @@ let activeOutputPath = null;
 
 function cancelActiveRender() {
   if (activeRenderProc) {
-    console.log('🛑 Cancelando renderizado activo...');
     try {
-      activeRenderProc.kill('SIGKILL');
-    } catch (e) {}
+      if (process.platform === 'win32') {
+        execSync(`taskkill /pid ${activeRenderProc.pid} /T /F`, { stdio: 'ignore' });
+      } else {
+        activeRenderProc.kill('SIGKILL');
+      }
+    } catch (e) {
+      try { activeRenderProc.kill(); } catch (err) {}
+    }
     activeRenderProc = null;
     if (activeOutputPath && fs.existsSync(activeOutputPath)) {
       try { fs.unlinkSync(activeOutputPath); } catch (e) {}
@@ -71,10 +74,56 @@ function cancelActiveRender() {
   }
 }
 
+function getFFmpegBinary() {
+  const isWin = process.platform === 'win32';
+
+  if (ffmpegPath && fs.existsSync(ffmpegPath)) {
+    if (!isWin) {
+      try { fs.chmodSync(ffmpegPath, 0o755); } catch (e) {}
+    }
+    return ffmpegPath;
+  }
+
+  if (isWin) {
+    const localExe = path.resolve('ffmpeg.exe');
+    if (fs.existsSync(localExe)) return localExe;
+
+    const staticExe = path.resolve('node_modules/ffmpeg-static/ffmpeg.exe');
+    if (fs.existsSync(staticExe)) return staticExe;
+  }
+
+  try {
+    const checkCmd = isWin ? 'where ffmpeg' : 'which ffmpeg';
+    const systemFfmpeg = execSync(checkCmd, { stdio: ['pipe', 'pipe', 'ignore'] })
+      .toString()
+      .trim()
+      .split(/\r?\n/)[0]
+      .trim();
+
+    if (systemFfmpeg && fs.existsSync(systemFfmpeg)) {
+      return systemFfmpeg;
+    }
+  } catch (e) {}
+
+  return isWin ? 'ffmpeg.exe' : 'ffmpeg';
+}
+
 function runFFmpegRender(payload, wsClient) {
   cancelActiveRender();
 
-  const { videoFileName, bgMusicFileName, events, duration, bgSettings, hudSnapshots, tickerSnapshots } = payload;
+  const FFMPEG_BIN = getFFmpegBinary();
+
+  const {
+    videoFileName,
+    events,
+    duration,
+    bgSettings,
+    bgPlaylist,
+    videoAudioSettings,
+    hudSnapshots,
+    tickerSnapshots
+  } = payload;
+
   const inputVideoPath = path.join(UPLOADS_DIR, videoFileName);
   const outputFileName = `partida_exportada_${Date.now()}.mp4`;
   const outputPath = path.join(RENDERS_DIR, outputFileName);
@@ -108,7 +157,7 @@ function runFFmpegRender(payload, wsClient) {
     });
   }
 
-  /* 2. CINTA */
+  /* 2. CINTA CON SPLIT=2 (CORRIGE ERROR 234) */
   if (tickerSnapshots && tickerSnapshots.length > 0) {
     tickerSnapshots.forEach((tick, idx) => {
       if (!tick.dataUrl || !tick.visible) return;
@@ -120,22 +169,26 @@ function runFFmpegRender(payload, wsClient) {
 
       ffmpegArgs.push('-loop', '1', '-t', `${safeDuration}`, '-i', tickPath);
       const tickInputIdx = inputIdx++;
-      const segW = Math.max(300, Math.round(tick.segmentWidth || 1200));
+      const segW = Math.max(1200, Math.round(tick.segmentWidth || 2000));
       const tStart = Math.max(0, tick.start).toFixed(2);
       const tEnd = Math.min(safeDuration, tick.end).toFixed(2);
 
       const barBg = `v_bar_${idx}`;
-      const tickScale = `v_tick_sc_${idx}`;
+      const tickScaleA = `v_tick_a_${idx}`;
+      const tickScaleB = `v_tick_b_${idx}`;
+      const tickMid = `v_tick_mid_${idx}`;
       const nextOut = `v_tick_${idx}`;
 
       filterComplex.push(`[${currentVideoOutput}]drawbox=x=0:y=ih-56:w=iw:h=56:color=black@0.92:t=fill:enable='between(t,${tStart},${tEnd})'[${barBg}]`);
-      filterComplex.push(`[${tickInputIdx}:v]scale=-1:56[${tickScale}]`);
-      filterComplex.push(`[${barBg}][${tickScale}]overlay=x='-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`);
+      // split=2 duplica el flujo para que dos overlays lo usen legalmente en FFmpeg
+      filterComplex.push(`[${tickInputIdx}:v]scale=-1:56,split=2[${tickScaleA}][${tickScaleB}]`);
+      filterComplex.push(`[${barBg}][${tickScaleA}]overlay=x='-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${tickMid}]`);
+      filterComplex.push(`[${tickMid}][${tickScaleB}]overlay=x='${segW}-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`);
       currentVideoOutput = nextOut;
     });
   }
 
-  /* 3. REACCIONES */
+  /* 3. REACCIONES Y CONFETI */
   const effectEvents = (events || []).filter(e => e.actionType === 'effect');
 
   effectEvents.forEach((ev, idx) => {
@@ -152,7 +205,7 @@ function runFFmpegRender(payload, wsClient) {
       const confettiWebm = path.join(STICKERS_DIR, `confetti_${isP1 ? 'p1' : 'p2'}.webm`);
       if (fs.existsSync(confettiWebm)) {
         ffmpegArgs.push('-i', confettiWebm);
-        filterComplex.push(`[${sIdx}:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,setpts=PTS-STARTPTS+${t0.toFixed(2)}/TB[${prepOut}]`);
+        filterComplex.push(`[${sIdx}:v]colorkey=0x000000:0.25:0.10,scale=1920:1080,setpts=PTS-STARTPTS+${t0.toFixed(2)}/TB[${prepOut}]`);
         filterComplex.push(`[${currentVideoOutput}][${prepOut}]overlay=x=0:y=0:eof_action=pass:enable='between(t,${t0.toFixed(2)},${(t0 + 2.2).toFixed(2)})'[${nextOut}]`);
         currentVideoOutput = nextOut;
         return;
@@ -188,24 +241,61 @@ function runFFmpegRender(payload, wsClient) {
   });
 
   /* 4. AUDIO */
-  ffmpegArgs.push('-t', `${safeDuration}`, '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo');
-  const nullAudioIdx = inputIdx++;
-  let audioInputs = [`[${nullAudioIdx}:a]`];
+  let audioInputs = [];
 
-  if (bgMusicFileName) {
-    const bgMusicPath = path.join(UPLOADS_DIR, bgMusicFileName);
-    if (fs.existsSync(bgMusicPath)) {
-      if (bgSettings?.loop) {
-        ffmpegArgs.push('-stream_loop', '-1');
+  let hasVideoAudio = false;
+  try {
+    const probe = execSync(`"${FFMPEG_BIN}" -i "${inputVideoPath}"`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
+    hasVideoAudio = /Stream #.*Audio:/.test(probe);
+  } catch (e) {
+    const errStr = e.stderr?.toString() || e.stdout?.toString() || '';
+    hasVideoAudio = /Stream #.*Audio:/.test(errStr);
+  }
+
+  const vAudioMuted = videoAudioSettings?.muted === true;
+  const vAudioVolume = Math.max(0, Math.min(1.0, parseFloat(videoAudioSettings?.volume ?? 1)));
+
+  if (hasVideoAudio && !vAudioMuted && vAudioVolume > 0) {
+    filterComplex.push(`[0:a]volume=${vAudioVolume.toFixed(2)},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[v_orig_audio]`);
+    audioInputs.push('[v_orig_audio]');
+  }
+
+  if (bgPlaylist && Array.isArray(bgPlaylist) && bgPlaylist.length > 0) {
+    const validSongs = bgPlaylist.filter(song => {
+      const fullPath = path.join(UPLOADS_DIR, song.filename);
+      return fs.existsSync(fullPath);
+    });
+
+    if (validSongs.length > 0) {
+      let totalPlaylistDuration = validSongs.reduce((acc, s) => acc + (parseFloat(s.duration) || 120), 0);
+      let repeatCount = 1;
+      if (bgSettings?.loop && totalPlaylistDuration > 0 && safeDuration > totalPlaylistDuration) {
+        repeatCount = Math.ceil(safeDuration / totalPlaylistDuration) + 1;
       }
-      ffmpegArgs.push('-i', bgMusicPath);
-      let bgFilter = `[${inputIdx}:a]volume=${bgSettings?.volume || 0.3}`;
+
+      let songConcatInputs = [];
+      let songCounter = 0;
+
+      for (let r = 0; r < repeatCount; r++) {
+        for (let s = 0; s < validSongs.length; s++) {
+          const songPath = path.join(UPLOADS_DIR, validSongs[s].filename);
+          ffmpegArgs.push('-i', songPath);
+          const currentSongInputIdx = inputIdx++;
+          const normOut = `bg_norm_${songCounter++}`;
+          filterComplex.push(`[${currentSongInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${normOut}]`);
+          songConcatInputs.push(`[${normOut}]`);
+        }
+      }
+
+      const concatFilterOut = 'bg_concat_out';
+      filterComplex.push(`${songConcatInputs.join('')}concat=n=${songConcatInputs.length}:v=0:a=1[${concatFilterOut}]`);
+
+      let bgFilter = `[${concatFilterOut}]atrim=0:${safeDuration},volume=${bgSettings?.volume || 0.35}`;
       if (bgSettings?.fadeIn) bgFilter += `,afade=t=in:ss=0:d=3`;
       if (bgSettings?.fadeOut && safeDuration > 5) bgFilter += `,afade=t=out:st=${safeDuration - 3}:d=3`;
       bgFilter += `[bg_music]`;
       filterComplex.push(bgFilter);
       audioInputs.push('[bg_music]');
-      inputIdx++;
     }
   }
 
@@ -252,10 +342,14 @@ function runFFmpegRender(payload, wsClient) {
     }
   });
 
-  if (audioInputs.length > 1) {
-    filterComplex.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=first:dropout_transition=2[aout]`);
-  } else {
+  if (audioInputs.length === 0) {
+    ffmpegArgs.push('-t', `${safeDuration}`, '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo');
+    const nullIdx = inputIdx++;
+    filterComplex.push(`[${nullIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[aout]`);
+  } else if (audioInputs.length === 1) {
     filterComplex.push(`${audioInputs[0]}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[aout]`);
+  } else {
+    filterComplex.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=first:dropout_transition=2[aout]`);
   }
 
   ffmpegArgs.push(
@@ -279,6 +373,16 @@ function runFFmpegRender(payload, wsClient) {
   let stderrLog = '';
   const proc = spawn(FFMPEG_BIN, ffmpegArgs);
   activeRenderProc = proc;
+
+  proc.on('error', (err) => {
+    activeRenderProc = null;
+    activeOutputPath = null;
+    console.error('❌ Error al iniciar FFmpeg:', err.message);
+    wsClient.send(JSON.stringify({
+      type: 'RENDER_ERROR',
+      payload: `No se pudo iniciar FFmpeg (${err.code}): ${err.message}.`
+    }));
+  });
 
   proc.stderr.on('data', (chunk) => {
     const text = chunk.toString();
@@ -306,25 +410,24 @@ function runFFmpegRender(payload, wsClient) {
     activeRenderProc = null;
     activeOutputPath = null;
 
-    tempFilesToDelete.forEach((fPath) => {
-      try {
-        if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
-      } catch (e) {}
-    });
+    setTimeout(() => {
+      tempFilesToDelete.forEach((fPath) => {
+        try {
+          if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
+        } catch (e) {}
+      });
+    }, 120);
 
     if (signal === 'SIGKILL' || signal === 'SIGTERM') {
-      console.log('🛑 Renderizado detenido por el usuario.');
       return;
     }
 
     if (code === 0) {
-      console.log('✅ Renderizado completado 100%:', outputFileName);
       wsClient.send(JSON.stringify({
         type: 'RENDER_PROGRESS',
         payload: { active: false, percent: 100, downloadUrl: `/renders/${outputFileName}` }
       }));
     } else {
-      console.error('❌ Error FFmpeg código de salida:', code);
       const lastLines = stderrLog.split('\n').slice(-12).join('\n');
       wsClient.send(JSON.stringify({
         type: 'RENDER_ERROR',
@@ -346,7 +449,6 @@ function getLocalIp() {
   return 'localhost';
 }
 
-/* ==================== SERVIDOR ==================== */
 async function start() {
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -359,7 +461,6 @@ async function start() {
       return;
     }
 
-    // Endpoint para proveer la IP local al navegador
     if (req.method === 'GET' && req.url === '/api/network-info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ip: getLocalIp(), port: 5173 }));
@@ -382,7 +483,6 @@ async function start() {
 
       req.pipe(writeStream);
       writeStream.on('finish', () => {
-        console.log(`🎉 Confeti WebM real de canvas-confetti guardado para ${player}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       });
