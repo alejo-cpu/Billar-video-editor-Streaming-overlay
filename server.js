@@ -11,9 +11,24 @@ const STATE_FILE = 'state.json';
 const RENDERS_DIR = path.resolve('public/renders');
 const UPLOADS_DIR = path.resolve('public/temp_uploads');
 const STICKERS_DIR = path.resolve('public/stickers');
+const PROJECTS_BASE_DIR = path.resolve('public/proyectos_billar');
 
 if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(PROJECTS_BASE_DIR)) fs.mkdirSync(PROJECTS_BASE_DIR, { recursive: true });
+
+// Limpieza preventiva de temporales huérfanos antiguos
+try {
+  const now = Date.now();
+  fs.readdirSync(UPLOADS_DIR).forEach(file => {
+    const fPath = path.join(UPLOADS_DIR, file);
+    const stats = fs.statSync(fPath);
+    if (now - stats.mtimeMs > 1000 * 60 * 60 * 12) {
+      if (stats.isDirectory()) fs.rmSync(fPath, { recursive: true, force: true });
+      else fs.unlinkSync(fPath);
+    }
+  });
+} catch (e) {}
 
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%231a1d26"/><circle cx="50" cy="38" r="19" fill="%234b5563"/><path d="M18,92 C18,68 32,62 50,62 C68,62 82,68 82,92 Z" fill="%234b5563"/></svg>`;
 
@@ -110,7 +125,6 @@ function getFFmpegBinary() {
 
 function runFFmpegRender(payload, wsClient) {
   cancelActiveRender();
-
   const FFMPEG_BIN = getFFmpegBinary();
 
   const {
@@ -124,7 +138,10 @@ function runFFmpegRender(payload, wsClient) {
     tickerSnapshots
   } = payload;
 
-  const inputVideoPath = path.join(UPLOADS_DIR, videoFileName);
+  const inputVideoPath = path.isAbsolute(videoFileName) 
+    ? videoFileName 
+    : path.join(UPLOADS_DIR, videoFileName);
+
   const outputFileName = `partida_exportada_${Date.now()}.mp4`;
   const outputPath = path.join(RENDERS_DIR, outputFileName);
   activeOutputPath = outputPath;
@@ -157,7 +174,7 @@ function runFFmpegRender(payload, wsClient) {
     });
   }
 
-  /* 2. CINTA CON SPLIT=2 (CORRIGE ERROR 234) */
+  /* 2. CINTA CON ANCHO 'w' NATIVO */
   if (tickerSnapshots && tickerSnapshots.length > 0) {
     tickerSnapshots.forEach((tick, idx) => {
       if (!tick.dataUrl || !tick.visible) return;
@@ -169,7 +186,6 @@ function runFFmpegRender(payload, wsClient) {
 
       ffmpegArgs.push('-loop', '1', '-t', `${safeDuration}`, '-i', tickPath);
       const tickInputIdx = inputIdx++;
-      const segW = Math.max(1200, Math.round(tick.segmentWidth || 2000));
       const tStart = Math.max(0, tick.start).toFixed(2);
       const tEnd = Math.min(safeDuration, tick.end).toFixed(2);
 
@@ -180,23 +196,20 @@ function runFFmpegRender(payload, wsClient) {
       const nextOut = `v_tick_${idx}`;
 
       filterComplex.push(`[${currentVideoOutput}]drawbox=x=0:y=ih-56:w=iw:h=56:color=black@0.92:t=fill:enable='between(t,${tStart},${tEnd})'[${barBg}]`);
-      // split=2 duplica el flujo para que dos overlays lo usen legalmente en FFmpeg
       filterComplex.push(`[${tickInputIdx}:v]scale=-1:56,split=2[${tickScaleA}][${tickScaleB}]`);
-      filterComplex.push(`[${barBg}][${tickScaleA}]overlay=x='-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${tickMid}]`);
-      filterComplex.push(`[${tickMid}][${tickScaleB}]overlay=x='${segW}-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`);
+      filterComplex.push(`[${barBg}][${tickScaleA}]overlay=x='-mod(t*75\\,w)':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${tickMid}]`);
+      filterComplex.push(`[${tickMid}][${tickScaleB}]overlay=x='w-mod(t*75\\,w)':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`);
       currentVideoOutput = nextOut;
     });
   }
 
-  /* 3. REACCIONES Y CONFETI */
+  /* 3. REACCIONES */
   const effectEvents = (events || []).filter(e => e.actionType === 'effect');
-
   effectEvents.forEach((ev, idx) => {
     const effectName = ev.payload.effect;
     const isP1 = ev.payload.playerKey === 'p1';
     const isConfetti = effectName === 'confetti';
     const t0 = parseFloat(ev.time);
-
     const sIdx = inputIdx++;
     const prepOut = `v_sfx_prep_${idx}`;
     const nextOut = `v_eff_${idx}`;
@@ -225,9 +238,7 @@ function runFFmpegRender(payload, wsClient) {
     }
 
     let filterChain = `[${sIdx}:v]scale=120:120,setpts=PTS-STARTPTS+${t0.toFixed(2)}/TB`;
-    if (isP1) {
-      filterChain += `,hflip`;
-    }
+    if (isP1) filterChain += `,hflip`;
     filterChain += `[${prepOut}]`;
     filterComplex.push(filterChain);
 
@@ -236,13 +247,11 @@ function runFFmpegRender(payload, wsClient) {
     } else {
       filterComplex.push(`[${currentVideoOutput}][${prepOut}]overlay=x='if(lt(t-${t0}\\,0.35)\\, W-(32+w)*(t-${t0})/0.35\\, if(gt(t-${t0}\\,1.50)\\, (W-w-32)+(32+w)*(t-${t0}-1.50)/0.35\\, W-w-32))':y=H-h-90:eof_action=pass:enable='between(t,${t0.toFixed(2)},${(t0 + 1.85).toFixed(2)})'[${nextOut}]`);
     }
-
     currentVideoOutput = nextOut;
   });
 
-  /* 4. AUDIO */
+  /* 4. AUDIO CON RANGO Y FADES */
   let audioInputs = [];
-
   let hasVideoAudio = false;
   try {
     const probe = execSync(`"${FFMPEG_BIN}" -i "${inputVideoPath}"`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
@@ -262,15 +271,19 @@ function runFFmpegRender(payload, wsClient) {
 
   if (bgPlaylist && Array.isArray(bgPlaylist) && bgPlaylist.length > 0) {
     const validSongs = bgPlaylist.filter(song => {
-      const fullPath = path.join(UPLOADS_DIR, song.filename);
+      const fullPath = path.isAbsolute(song.filename) ? song.filename : path.join(UPLOADS_DIR, song.filename);
       return fs.existsSync(fullPath);
     });
 
     if (validSongs.length > 0) {
+      const rStart = Math.max(0, parseFloat(bgSettings?.rangeStart) || 0);
+      const rEnd = (parseFloat(bgSettings?.rangeEnd) > 0) ? Math.min(safeDuration, parseFloat(bgSettings.rangeEnd)) : safeDuration;
+      const targetMusicSpan = Math.max(1, rEnd - rStart);
+
       let totalPlaylistDuration = validSongs.reduce((acc, s) => acc + (parseFloat(s.duration) || 120), 0);
       let repeatCount = 1;
-      if (bgSettings?.loop && totalPlaylistDuration > 0 && safeDuration > totalPlaylistDuration) {
-        repeatCount = Math.ceil(safeDuration / totalPlaylistDuration) + 1;
+      if (bgSettings?.loop && totalPlaylistDuration > 0 && targetMusicSpan > totalPlaylistDuration) {
+        repeatCount = Math.ceil(targetMusicSpan / totalPlaylistDuration) + 1;
       }
 
       let songConcatInputs = [];
@@ -278,7 +291,7 @@ function runFFmpegRender(payload, wsClient) {
 
       for (let r = 0; r < repeatCount; r++) {
         for (let s = 0; s < validSongs.length; s++) {
-          const songPath = path.join(UPLOADS_DIR, validSongs[s].filename);
+          const songPath = path.isAbsolute(validSongs[s].filename) ? validSongs[s].filename : path.join(UPLOADS_DIR, validSongs[s].filename);
           ffmpegArgs.push('-i', songPath);
           const currentSongInputIdx = inputIdx++;
           const normOut = `bg_norm_${songCounter++}`;
@@ -290,9 +303,16 @@ function runFFmpegRender(payload, wsClient) {
       const concatFilterOut = 'bg_concat_out';
       filterComplex.push(`${songConcatInputs.join('')}concat=n=${songConcatInputs.length}:v=0:a=1[${concatFilterOut}]`);
 
-      let bgFilter = `[${concatFilterOut}]atrim=0:${safeDuration},volume=${bgSettings?.volume || 0.35}`;
+      let bgFilter = `[${concatFilterOut}]atrim=0:${targetMusicSpan}`;
       if (bgSettings?.fadeIn) bgFilter += `,afade=t=in:ss=0:d=3`;
-      if (bgSettings?.fadeOut && safeDuration > 5) bgFilter += `,afade=t=out:st=${safeDuration - 3}:d=3`;
+      if (bgSettings?.fadeOut && targetMusicSpan > 6) bgFilter += `,afade=t=out:st=${targetMusicSpan - 3}:d=3`;
+      bgFilter += `,volume=${bgSettings?.volume || 0.35}`;
+      
+      if (rStart > 0) {
+        const delayMs = Math.round(rStart * 1000);
+        bgFilter += `,adelay=${delayMs}|${delayMs}`;
+      }
+
       bgFilter += `[bg_music]`;
       filterComplex.push(bgFilter);
       audioInputs.push('[bg_music]');
@@ -312,21 +332,14 @@ function runFFmpegRender(payload, wsClient) {
 
     if (ev.actionType === 'effect') {
       sfxFile = `public/sounds/${ev.payload.effect}.mp3`;
-      if (ev.payload.effect === 'fire') {
-        maxDur = 1.8;
-        fadeStart = 1.2;
-      } else if (ev.payload.effect === 'clap') {
-        maxDur = 2.6;
-        fadeStart = 1.8;
-      }
+      if (ev.payload.effect === 'fire') { maxDur = 1.8; fadeStart = 1.2; }
+      else if (ev.payload.effect === 'clap') { maxDur = 2.6; fadeStart = 1.8; }
     } else if (ev.actionType === 'adjustBalls') {
       sfxFile = ev.payload.delta > 0 ? `public/sounds/+1 Point.mp3` : `public/sounds/-1 Point.mp3`;
-      maxDur = 0.5;
-      fadeStart = 0.4;
+      maxDur = 0.5; fadeStart = 0.4;
     } else if (ev.actionType === 'adjustGames') {
       sfxFile = `public/sounds/+1 Games.mp3`;
-      maxDur = 1.5;
-      fadeStart = 1.2;
+      maxDur = 1.5; fadeStart = 1.2;
     }
 
     if (sfxFile) {
@@ -352,8 +365,14 @@ function runFFmpegRender(payload, wsClient) {
     filterComplex.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=first:dropout_transition=2[aout]`);
   }
 
+  // SCRIPT DE FILTROS PARA WINDOWS Y LINUX (SIN LÍMITE DE COMANDO)
+  const scriptFileName = `filter_script_${Date.now()}.txt`;
+  const scriptPath = path.join(UPLOADS_DIR, scriptFileName);
+  fs.writeFileSync(scriptPath, filterComplex.join(';\n'), 'utf8');
+  tempFilesToDelete.push(scriptPath);
+
   ffmpegArgs.push(
-    '-filter_complex', filterComplex.join(';'),
+    '-filter_complex_script', scriptPath,
     '-map', `[${currentVideoOutput}]`,
     '-map', '[aout]',
     '-c:v', 'libx264',
@@ -368,7 +387,7 @@ function runFFmpegRender(payload, wsClient) {
     outputPath
   );
 
-  console.log('🚀 COMANDO FFMPEG EJECUTÁNDOSE:', FFMPEG_BIN, ffmpegArgs.join(' '));
+  console.log(`🚀 FFmpeg ejecutando con script (${filterComplex.length} operaciones)`);
 
   let stderrLog = '';
   const proc = spawn(FFMPEG_BIN, ffmpegArgs);
@@ -377,7 +396,6 @@ function runFFmpegRender(payload, wsClient) {
   proc.on('error', (err) => {
     activeRenderProc = null;
     activeOutputPath = null;
-    console.error('❌ Error al iniciar FFmpeg:', err.message);
     wsClient.send(JSON.stringify({
       type: 'RENDER_ERROR',
       payload: `No se pudo iniciar FFmpeg (${err.code}): ${err.message}.`
@@ -416,11 +434,9 @@ function runFFmpegRender(payload, wsClient) {
           if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
         } catch (e) {}
       });
-    }, 120);
+    }, 150);
 
-    if (signal === 'SIGKILL' || signal === 'SIGTERM') {
-      return;
-    }
+    if (signal === 'SIGKILL' || signal === 'SIGTERM') return;
 
     if (code === 0) {
       wsClient.send(JSON.stringify({
@@ -428,7 +444,7 @@ function runFFmpegRender(payload, wsClient) {
         payload: { active: false, percent: 100, downloadUrl: `/renders/${outputFileName}` }
       }));
     } else {
-      const lastLines = stderrLog.split('\n').slice(-12).join('\n');
+      const lastLines = stderrLog.split('\n').slice(-15).join('\n');
       wsClient.send(JSON.stringify({
         type: 'RENDER_ERROR',
         payload: `Error FFmpeg (${code}):\n${lastLines}`
@@ -480,7 +496,6 @@ async function start() {
       const player = urlObj.searchParams.get('player') || 'p1';
       const dest = path.join(STICKERS_DIR, `confetti_${player}.webm`);
       const writeStream = fs.createWriteStream(dest);
-
       req.pipe(writeStream);
       writeStream.on('finish', () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -489,6 +504,7 @@ async function start() {
       return;
     }
 
+    // Subida general de medios
     if (req.method === 'POST' && req.url.startsWith('/api/upload-media')) {
       const fileNameHeader = req.headers['x-file-name'] ? decodeURIComponent(req.headers['x-file-name']) : 'video.mp4';
       const cleanName = fileNameHeader.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -508,6 +524,85 @@ async function start() {
       return;
     }
 
+    // SUBIDA PERMANENTE DE CANCIONES A LA CARPETA DEL PROYECTO (proyectos_billar/[proyecto]/audio/)
+    if (req.method === 'POST' && req.url.startsWith('/api/project/upload-audio')) {
+      const urlObj = new URL(req.url, 'http://localhost:3001');
+      const projName = (urlObj.searchParams.get('project') || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const rawFile = decodeURIComponent(req.headers['x-file-name'] || 'audio.mp3').replace(/[^a-zA-Z0-9._-]/g, '_');
+
+      const targetDir = path.join(PROJECTS_BASE_DIR, projName, 'audio');
+      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+      const dest = path.join(targetDir, rawFile);
+      const writeStream = fs.createWriteStream(dest);
+      req.pipe(writeStream);
+      writeStream.on('finish', () => {
+        const publicPath = `/proyectos_billar/${projName}/audio/${rawFile}`;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, publicUrl: publicPath, relativePath: dest }));
+      });
+      writeStream.on('error', () => {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Error guardando audio en el proyecto' }));
+      });
+      return;
+    }
+
+    // GESTIÓN DE PROYECTOS: GUARDADO DIRECTO EN DISCO (Linux y Windows)
+    if (req.method === 'POST' && req.url === '/api/project/save') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body);
+          const rawName = (payload.projectName || payload.videoName || 'partida').replace(/[^a-zA-Z0-9_-]/g, '_');
+          
+          // Crear estructura de carpetas: proyectos_billar/[Nombre_Partida]/
+          const projectDir = path.join(PROJECTS_BASE_DIR, rawName);
+          const videoSubDir = path.join(projectDir, 'video');
+          const audioSubDir = path.join(projectDir, 'audio');
+
+          if (!fs.existsSync(videoSubDir)) fs.mkdirSync(videoSubDir, { recursive: true });
+          if (!fs.existsSync(audioSubDir)) fs.mkdirSync(audioSubDir, { recursive: true });
+
+          const fileName = `${rawName}.billiard`;
+          const filePath = path.join(projectDir, fileName);
+
+          fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: true, 
+            fileName,
+            projectFolder: projectDir,
+            videoFolder: videoSubDir,
+            audioFolder: audioSubDir
+          }));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // COMPROBAR SI EL VIDEO ESTÁ PRESENTE EN LA CARPETA DEL PROYECTO
+    if (req.method === 'GET' && req.url.startsWith('/api/project/check-video')) {
+      const urlObj = new URL(req.url, 'http://localhost:3001');
+      const projName = (urlObj.searchParams.get('project') || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const videoName = (urlObj.searchParams.get('video') || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+
+      const videoPath = path.join(PROJECTS_BASE_DIR, projName, 'video', videoName);
+      const exists = fs.existsSync(videoPath);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        exists, 
+        videoUrl: exists ? `/proyectos_billar/${projName}/video/${videoName}` : null,
+        suggestedPath: path.join(PROJECTS_BASE_DIR, projName, 'video')
+      }));
+      return;
+    }
+
     res.writeHead(404);
     res.end();
   });
@@ -523,10 +618,16 @@ async function start() {
     });
   }
 
+  // RELOJ PRECISO CON Date.now() (CERO TIMER DRIFT)
+  let lastTimerTick = Date.now();
   setInterval(() => {
+    const now = Date.now();
+    const elapsed = (now - lastTimerTick) / 1000;
+    lastTimerTick = now;
+
     if (currentState?.timer?.enabled && currentState.timer.running) {
       if (currentState.timer.seconds > 0) {
-        currentState.timer.seconds = Math.max(0, +(currentState.timer.seconds - 0.25).toFixed(2));
+        currentState.timer.seconds = Math.max(0, +(currentState.timer.seconds - elapsed).toFixed(2));
         if (currentState.timer.seconds <= 0) {
           if (currentState.turns?.enabled) {
             currentState.turns.active = currentState.turns.active === 'p1' ? 'p2' : 'p1';
@@ -542,7 +643,7 @@ async function start() {
         }
       }
     }
-  }, 250);
+  }, 200);
 
   wss.on('connection', (ws) => {
     ws.send(JSON.stringify({ type: 'SYNC_STATE', payload: currentState }));
@@ -565,7 +666,7 @@ async function start() {
           cancelActiveRender();
         }
       } catch (e) {
-        console.error('Error procesando mensaje:', e);
+        console.error('Error WebSocket:', e);
       }
     });
   });

@@ -11,9 +11,24 @@ const STATE_FILE = 'state.json';
 const RENDERS_DIR = path.resolve('public/renders');
 const UPLOADS_DIR = path.resolve('public/temp_uploads');
 const STICKERS_DIR = path.resolve('public/stickers');
+const PROJECTS_DIR = path.resolve('projects');
 
 if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+
+// Limpieza automática preventiva de temporales huérfanos antiguos al arrancar
+try {
+  const now = Date.now();
+  fs.readdirSync(UPLOADS_DIR).forEach(file => {
+    const fPath = path.join(UPLOADS_DIR, file);
+    const stats = fs.statSync(fPath);
+    if (now - stats.mtimeMs > 1000 * 60 * 60 * 12) { // más de 12 horas
+      if (stats.isDirectory()) fs.rmSync(fPath, { recursive: true, force: true });
+      else fs.unlinkSync(fPath);
+    }
+  });
+} catch (e) {}
 
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%231a1d26"/><circle cx="50" cy="38" r="19" fill="%234b5563"/><path d="M18,92 C18,68 32,62 50,62 C68,62 82,68 82,92 Z" fill="%234b5563"/></svg>`;
 
@@ -138,7 +153,7 @@ function runFFmpegRender(payload, wsClient) {
   filterComplex.push(`[0:v]scale=1920:1080,setsar=1[v_base]`);
   let currentVideoOutput = 'v_base';
 
-  /* 1. HUD */
+  /* 1. HUD EN ALTA DEFINICIÓN */
   if (hudSnapshots && hudSnapshots.length > 0) {
     hudSnapshots.forEach((snap, idx) => {
       const base64Data = snap.dataUrl.replace(/^data:image\/png;base64,/, '');
@@ -157,7 +172,7 @@ function runFFmpegRender(payload, wsClient) {
     });
   }
 
-  /* 2. CINTA CON SPLIT=2 (CORRIGE ERROR 234) */
+  /* 2. CINTA CONTINUA SIN HUECOS (USANDO LA VARIABLE NATIVA 'w' DE FFMPEG) */
   if (tickerSnapshots && tickerSnapshots.length > 0) {
     tickerSnapshots.forEach((tick, idx) => {
       if (!tick.dataUrl || !tick.visible) return;
@@ -169,7 +184,6 @@ function runFFmpegRender(payload, wsClient) {
 
       ffmpegArgs.push('-loop', '1', '-t', `${safeDuration}`, '-i', tickPath);
       const tickInputIdx = inputIdx++;
-      const segW = Math.max(1200, Math.round(tick.segmentWidth || 2000));
       const tStart = Math.max(0, tick.start).toFixed(2);
       const tEnd = Math.min(safeDuration, tick.end).toFixed(2);
 
@@ -179,11 +193,13 @@ function runFFmpegRender(payload, wsClient) {
       const tickMid = `v_tick_mid_${idx}`;
       const nextOut = `v_tick_${idx}`;
 
+      // Barra translúcida al 92% coordinada con el editor
       filterComplex.push(`[${currentVideoOutput}]drawbox=x=0:y=ih-56:w=iw:h=56:color=black@0.92:t=fill:enable='between(t,${tStart},${tEnd})'[${barBg}]`);
-      // split=2 duplica el flujo para que dos overlays lo usen legalmente en FFmpeg
+      // Escala manteniendo proporción y duplica con split=2
       filterComplex.push(`[${tickInputIdx}:v]scale=-1:56,split=2[${tickScaleA}][${tickScaleB}]`);
-      filterComplex.push(`[${barBg}][${tickScaleA}]overlay=x='-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${tickMid}]`);
-      filterComplex.push(`[${tickMid}][${tickScaleB}]overlay=x='${segW}-mod(t*75\\,${segW})':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`);
+      // Unión matemática perfecta con 'w': el segmento B empieza donde termina el A
+      filterComplex.push(`[${barBg}][${tickScaleA}]overlay=x='-mod(t*75\\,w)':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${tickMid}]`);
+      filterComplex.push(`[${tickMid}][${tickScaleB}]overlay=x='w-mod(t*75\\,w)':y=H-56:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`);
       currentVideoOutput = nextOut;
     });
   }
@@ -352,8 +368,14 @@ function runFFmpegRender(payload, wsClient) {
     filterComplex.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=first:dropout_transition=2[aout]`);
   }
 
+  // SOLUCIÓN A WINDOWS E2BIG: Escribir filtros en archivo script temporal
+  const scriptFileName = `filter_script_${Date.now()}.txt`;
+  const scriptPath = path.join(UPLOADS_DIR, scriptFileName);
+  fs.writeFileSync(scriptPath, filterComplex.join(';\n'), 'utf8');
+  tempFilesToDelete.push(scriptPath);
+
   ffmpegArgs.push(
-    '-filter_complex', filterComplex.join(';'),
+    '-filter_complex_script', scriptPath,
     '-map', `[${currentVideoOutput}]`,
     '-map', '[aout]',
     '-c:v', 'libx264',
@@ -368,7 +390,8 @@ function runFFmpegRender(payload, wsClient) {
     outputPath
   );
 
-  console.log('🚀 COMANDO FFMPEG EJECUTÁNDOSE:', FFMPEG_BIN, ffmpegArgs.join(' '));
+  console.log(`🚀 FFmpeg ejecutando con script de filtros (${filterComplex.length} operaciones):`);
+  console.log(`${FFMPEG_BIN} ${ffmpegArgs.filter(a => a !== scriptPath).join(' ')} -filter_complex_script ${scriptFileName}`);
 
   let stderrLog = '';
   const proc = spawn(FFMPEG_BIN, ffmpegArgs);
@@ -416,7 +439,7 @@ function runFFmpegRender(payload, wsClient) {
           if (fs.existsSync(fPath)) fs.unlinkSync(fPath);
         } catch (e) {}
       });
-    }, 120);
+    }, 150);
 
     if (signal === 'SIGKILL' || signal === 'SIGTERM') {
       return;
@@ -428,7 +451,7 @@ function runFFmpegRender(payload, wsClient) {
         payload: { active: false, percent: 100, downloadUrl: `/renders/${outputFileName}` }
       }));
     } else {
-      const lastLines = stderrLog.split('\n').slice(-12).join('\n');
+      const lastLines = stderrLog.split('\n').slice(-15).join('\n');
       wsClient.send(JSON.stringify({
         type: 'RENDER_ERROR',
         payload: `Error FFmpeg (${code}):\n${lastLines}`
@@ -461,12 +484,14 @@ async function start() {
       return;
     }
 
+    // IP y red para conexión móvil
     if (req.method === 'GET' && req.url === '/api/network-info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ip: getLocalIp(), port: 5173 }));
       return;
     }
 
+    // Comprobación y subida de confeti
     if (req.method === 'GET' && req.url === '/api/check-confetti-webm') {
       const readyP1 = fs.existsSync(path.join(STICKERS_DIR, 'confetti_p1.webm'));
       const readyP2 = fs.existsSync(path.join(STICKERS_DIR, 'confetti_p2.webm'));
@@ -480,7 +505,6 @@ async function start() {
       const player = urlObj.searchParams.get('player') || 'p1';
       const dest = path.join(STICKERS_DIR, `confetti_${player}.webm`);
       const writeStream = fs.createWriteStream(dest);
-
       req.pipe(writeStream);
       writeStream.on('finish', () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -489,6 +513,7 @@ async function start() {
       return;
     }
 
+    // Subida de archivos de video o música
     if (req.method === 'POST' && req.url.startsWith('/api/upload-media')) {
       const fileNameHeader = req.headers['x-file-name'] ? decodeURIComponent(req.headers['x-file-name']) : 'video.mp4';
       const cleanName = fileNameHeader.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -508,6 +533,66 @@ async function start() {
       return;
     }
 
+    // GESTIÓN DE PROYECTOS: GUARDAR PROYECTO (.billiard / JSON)
+    if (req.method === 'POST' && req.url === '/api/project/save') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body);
+          const rawName = (payload.projectName || payload.videoName || 'partida').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const fileName = rawName.endsWith('.billiard') ? rawName : `${rawName}.billiard`;
+          const filePath = path.join(PROJECTS_DIR, fileName);
+
+          fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, fileName }));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // GESTIÓN DE PROYECTOS: LISTAR PROYECTOS DISPONIBLES
+    if (req.method === 'GET' && req.url === '/api/project/list') {
+      try {
+        const files = fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.billiard') || f.endsWith('.json'));
+        const list = files.map(f => {
+          const stats = fs.statSync(path.join(PROJECTS_DIR, f));
+          return { name: f, updatedAt: stats.mtimeMs, size: stats.size };
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ projects: list }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    // GESTIÓN DE PROYECTOS: CARGAR PROYECTO
+    if (req.method === 'GET' && req.url.startsWith('/api/project/load')) {
+      try {
+        const urlObj = new URL(req.url, 'http://localhost:3001');
+        const name = path.basename(urlObj.searchParams.get('name') || '');
+        const filePath = path.join(PROJECTS_DIR, name);
+        if (fs.existsSync(filePath)) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(content);
+        } else {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Proyecto no encontrado' }));
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
     res.writeHead(404);
     res.end();
   });
@@ -523,10 +608,16 @@ async function start() {
     });
   }
 
+  // RELOJ DE TIRO PRECISO CON Date.now() (CERO TIMER DRIFT)
+  let lastTimerTick = Date.now();
   setInterval(() => {
+    const now = Date.now();
+    const elapsed = (now - lastTimerTick) / 1000;
+    lastTimerTick = now;
+
     if (currentState?.timer?.enabled && currentState.timer.running) {
       if (currentState.timer.seconds > 0) {
-        currentState.timer.seconds = Math.max(0, +(currentState.timer.seconds - 0.25).toFixed(2));
+        currentState.timer.seconds = Math.max(0, +(currentState.timer.seconds - elapsed).toFixed(2));
         if (currentState.timer.seconds <= 0) {
           if (currentState.turns?.enabled) {
             currentState.turns.active = currentState.turns.active === 'p1' ? 'p2' : 'p1';
@@ -542,7 +633,7 @@ async function start() {
         }
       }
     }
-  }, 250);
+  }, 200);
 
   wss.on('connection', (ws) => {
     ws.send(JSON.stringify({ type: 'SYNC_STATE', payload: currentState }));
@@ -565,7 +656,7 @@ async function start() {
           cancelActiveRender();
         }
       } catch (e) {
-        console.error('Error procesando mensaje:', e);
+        console.error('Error procesando mensaje WebSocket:', e);
       }
     });
   });

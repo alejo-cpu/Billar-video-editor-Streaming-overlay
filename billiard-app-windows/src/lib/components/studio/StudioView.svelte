@@ -13,13 +13,16 @@
     Music, Film, Sparkles, Maximize, Minimize, ToggleLeft,
     ToggleRight, UserCheck, ArrowLeftRight, Sliders, Eye, EyeOff, X, Plus,
     ArrowUp, ArrowDown, ListMusic, Video, Shuffle, FolderOpen,
-    ChevronDown, ChevronUp, ImagePlus, Disc, Image as ImageIcon
+    ChevronDown, ChevronUp, ImagePlus, Disc, Image as ImageIcon,
+    Save, Folder, FileVideo, AlertCircle, RefreshCw, Check, Info
   } from 'lucide-svelte';
 
   let videoContainer;
   let videoElement;
   let bgAudioElement;
   let fileInput;
+  let relinkFileInput;
+  let projectFileInput;
   let musicFilesInput;
   let musicFolderInput;
   let confettiCanvas;
@@ -30,33 +33,44 @@
 
   let showCropModalP1 = false;
   let showCropModalP2 = false;
+  let showMissingVideoModal = false;
+  let showMusicInfoModal = false;
 
   let videoAspectCss = '16 / 9';
   let previewScale = 1;
   let resizeObserver = null;
 
+  // Auto-ocultado de controles a los 2.5s (EN PLAY Y EN PAUSA)
   let showControls = true;
   let hideControlsTimer = null;
 
   let isPlaylistExpanded = false;
   let isKeyframesExpanded = false;
 
+  let isTickerFrozen = false;
+  let autoSaveTimer = null;
+  let saveFeedbackMessage = '';
+
   /* ==================== CONTROL DE AUDIO ==================== */
-  let videoAudioSettings = {
-    volume: 1.0,
-    muted: false
-  };
+  let videoAudioSettings = { volume: 1.0, muted: false };
 
   let bgSettings = {
     volume: 0.35,
     loop: true,
-    shuffle: false,
     fadeIn: true,
-    fadeOut: true
+    fadeOut: true,
+    rangeStart: 0,
+    rangeEnd: 0
   };
 
-  let bgPlaylist = []; // [{ id, name, file, url, duration }]
-  let manualPlayingId = null; // ID de la canción que se está preescuchando
+  let bgPlaylist = [];
+  let isSamplingTrack = false;
+  let samplingSongId = null;
+  let samplingTimer = null;
+  let wasVideoPlayingBeforeSample = false;
+
+  // Deduplicador de sonidos
+  let playedKeyframeIds = new Set();
 
   const DEFAULT_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%231a1d26"/><circle cx="50" cy="38" r="19" fill="%234b5563"/><path d="M18,92 C18,68 32,62 50,62 C68,62 82,68 82,92 Z" fill="%234b5563"/></svg>`;
 
@@ -71,8 +85,8 @@
     { key: 'ball8', icon: '🎱', img: '/stickers/ball8.webp' }
   ];
 
-  /* ==================== ESTADO AISLADO ==================== */
-  const STUDIO_KEY = 'billiards_studio_config_v5';
+  /* ==================== ESTADO INICIAL BASE (T = 0) ==================== */
+  const STUDIO_KEY = 'billiards_studio_config_v7';
   const savedStudio = typeof localStorage !== 'undefined' ? localStorage.getItem(STUDIO_KEY) : null;
   
   let studioConfig = savedStudio ? JSON.parse(savedStudio) : {
@@ -92,56 +106,279 @@
     }
   };
 
+  // Guardar copia inmutable del estado inicial de sponsors a T=0
+  let initialTickerItems = JSON.parse(JSON.stringify(studioConfig.ticker.items));
+
   function persistStudio() {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STUDIO_KEY, JSON.stringify(studioConfig));
     }
   }
 
-  function updateVideoAspect() {
-    if (videoElement && videoElement.videoWidth && videoElement.videoHeight) {
-      videoAspectCss = `${videoElement.videoWidth} / ${videoElement.videoHeight}`;
+  /* ==================== BORRADOR DE CINTA ==================== */
+  let stagedTickerItems = JSON.parse(JSON.stringify(studioConfig.ticker.items));
+  let newTickerText = '';
+  let newTickerType = 'sponsor';
+  let newTickerLogo = '';
+  let logoUploadTab = 'file';
+
+  function applyStudioTickerChanges() {
+    const cloned = JSON.parse(JSON.stringify(stagedTickerItems));
+    // Registra keyframe histórico SIN destruir el pasado a T=0
+    triggerKeyframeWithAutosave(currentTime, 'setTickerItems', { items: cloned });
+    showFeedback('Marcas registradas en ' + formatTime(currentTime));
+  }
+
+  function handleTickerLogoFile(e) {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => { newTickerLogo = ev.target.result; };
+      reader.readAsDataURL(file);
     }
   }
 
-  function updatePreviewScale() {
-    if (videoContainer) {
-      const w = videoContainer.clientWidth;
-      if (w > 0) {
-        previewScale = w / 1920;
+  function addDraftTickerItem() {
+    if (newTickerText.trim()) {
+      stagedTickerItems = [
+        ...stagedTickerItems,
+        {
+          id: Date.now(),
+          type: newTickerType,
+          text: newTickerText.trim().toUpperCase(),
+          logoUrl: newTickerLogo.trim(),
+          active: true
+        }
+      ];
+      newTickerText = '';
+      newTickerLogo = '';
+    }
+  }
+
+  function toggleDraftTickerItem(id) {
+    stagedTickerItems = stagedTickerItems.map(i => i.id === id ? { ...i, active: !i.active } : i);
+  }
+
+  function removeDraftTickerItem(id) {
+    stagedTickerItems = stagedTickerItems.filter(i => i.id !== id);
+  }
+
+  /* ==================== GESTIÓN DE PROYECTOS ==================== */
+  function showFeedback(msg) {
+    saveFeedbackMessage = msg;
+    setTimeout(() => { saveFeedbackMessage = ''; }, 3500);
+  }
+
+  function buildProjectPayload() {
+    return {
+      version: '2.0',
+      projectName: $studioStore.projectName || ($studioStore.videoName ? $studioStore.videoName.replace(/\.[^/.]+$/, '') : 'partida_billar'),
+      videoName: $studioStore.videoName || '',
+      duration: duration || 0,
+      studioConfig,
+      initialTickerItems,
+      keyframes: $studioStore.keyframes,
+      bgSettings,
+      bgPlaylist: bgPlaylist.map(s => ({ id: s.id, name: s.name, duration: s.duration })),
+      videoAudioSettings,
+      savedAt: Date.now()
+    };
+  }
+
+  async function handleSaveProject(forceSaveAs = false) {
+    const payload = buildProjectPayload();
+    const res = await studioStore.saveProjectWithPicker(payload, forceSaveAs);
+    if (res?.success) {
+      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      showFeedback(`✓ Guardado (${t})`);
+    }
+  }
+
+  // Apertura directa infalible mediante selector de archivos
+  function handleProjectFileLoad(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        loadProjectFromObject(data);
+        showFeedback('Proyecto abierto: ' + file.name);
+      } catch (err) {
+        alert('Error al leer el archivo de proyecto: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
+
+  function loadProjectFromObject(projectData) {
+    if (!projectData) return;
+    if (projectData.studioConfig) {
+      studioConfig = projectData.studioConfig;
+      initialTickerItems = projectData.initialTickerItems || JSON.parse(JSON.stringify(studioConfig.ticker.items));
+      stagedTickerItems = JSON.parse(JSON.stringify(studioConfig.ticker.items));
+      persistStudio();
+    }
+    if (projectData.bgSettings) bgSettings = projectData.bgSettings;
+    if (projectData.videoAudioSettings) videoAudioSettings = projectData.videoAudioSettings;
+
+    studioStore.loadProjectData(projectData);
+
+    if (projectData.videoName) {
+      const currentLoadedName = $studioStore.videoFile ? $studioStore.videoFile.name : ($studioStore.videoName || '');
+      if (!currentLoadedName || currentLoadedName !== projectData.videoName) {
+        showMissingVideoModal = true;
       }
     }
   }
 
-  function resetControlsTimeout() {
-    showControls = true;
-    if (hideControlsTimer) clearTimeout(hideControlsTimer);
-    if (isFullscreen && isPlaying) {
-      hideControlsTimer = setTimeout(() => {
-        showControls = false;
-      }, 2500);
+  function handleRelinkVideo(e) {
+    const file = e.target.files?.[0];
+    if (file) {
+      studioStore.relinkVideo(file);
+      showMissingVideoModal = false;
+      showFeedback('Video vinculado: ' + file.name);
+    }
+    e.target.value = '';
+  }
+
+  /* ==================== AUDIO CON FADES SUAVES ==================== */
+  $: totalPlaylistSeconds = bgPlaylist.reduce((acc, s) => acc + (s.duration || 120), 0);
+
+  $: if (duration > 0 && bgSettings.rangeEnd === 0) {
+    bgSettings.rangeEnd = duration;
+  }
+
+  function handleRangeChange() {
+    if (!bgSettings.loop && totalPlaylistSeconds > 0) {
+      const maxPossibleEnd = (bgSettings.rangeStart || 0) + totalPlaylistSeconds;
+      if (bgSettings.rangeEnd > maxPossibleEnd) {
+        bgSettings.rangeEnd = Math.min(duration || maxPossibleEnd, maxPossibleEnd);
+      }
     }
   }
 
-  function handleKeyDown(e) {
-    const tag = e.target?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) {
+  function computeFadeVolume(videoSec) {
+    const rStart = bgSettings.rangeStart || 0;
+    const rEnd = (bgSettings.rangeEnd > 0) ? bgSettings.rangeEnd : (duration || 0);
+    const maxVol = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
+
+    if (videoSec < rStart || videoSec > rEnd) return 0;
+
+    const span = rEnd - rStart;
+    if (span <= 0) return 0;
+    const fadeWindow = Math.min(3, span / 2);
+
+    if (videoSec - rStart < fadeWindow && fadeWindow > 0) {
+      return maxVol * ((videoSec - rStart) / fadeWindow);
+    }
+    if (rEnd - videoSec < fadeWindow && fadeWindow > 0) {
+      return maxVol * ((rEnd - videoSec) / fadeWindow);
+    }
+    return maxVol;
+  }
+
+  function getTrackAtVideoTime(videoSec) {
+    if (!bgPlaylist || !bgPlaylist.length) return null;
+    const rStart = bgSettings.rangeStart || 0;
+    const rEnd = (bgSettings.rangeEnd > 0) ? bgSettings.rangeEnd : (duration || 0);
+
+    if (videoSec < rStart || videoSec > rEnd || totalPlaylistSeconds <= 0) return null;
+
+    let timeInMusic = videoSec - rStart;
+    if (bgSettings.loop) {
+      timeInMusic = timeInMusic % totalPlaylistSeconds;
+    } else if (timeInMusic >= totalPlaylistSeconds) {
+      return null;
+    }
+
+    let accumulated = 0;
+    for (let i = 0; i < bgPlaylist.length; i++) {
+      const s = bgPlaylist[i];
+      const sDur = s.duration || 120;
+      if (timeInMusic >= accumulated && timeInMusic < accumulated + sDur) {
+        return { song: s, index: i, offset: timeInMusic - accumulated, songDuration: sDur };
+      }
+      accumulated += sDur;
+    }
+    return null;
+  }
+
+  $: currentTrackInfo = getTrackAtVideoTime(currentTime);
+
+  function syncAudioWithVideo(videoSec, playing) {
+    if (!bgAudioElement || !bgPlaylist.length || isSamplingTrack) return;
+
+    const track = getTrackAtVideoTime(videoSec);
+    const targetVolume = computeFadeVolume(videoSec);
+    bgAudioElement.volume = targetVolume;
+
+    if (!track || targetVolume <= 0.001) {
+      if (!bgAudioElement.paused) bgAudioElement.pause();
       return;
     }
 
-    if (e.code === 'Space') {
-      e.preventDefault();
-      togglePlay();
-    } else if (e.code === 'ArrowRight') {
-      e.preventDefault();
-      seek(currentTime + 5);
-    } else if (e.code === 'ArrowLeft') {
-      e.preventDefault();
-      seek(currentTime - 5);
+    if (bgAudioElement.src !== track.song.url) {
+      bgAudioElement.src = track.song.url;
+      bgAudioElement.currentTime = track.offset;
+      if (playing) bgAudioElement.play().catch(() => {});
+    } else {
+      if (Math.abs(bgAudioElement.currentTime - track.offset) > 0.4) {
+        bgAudioElement.currentTime = track.offset;
+      }
+      if (playing && bgAudioElement.paused) {
+        bgAudioElement.play().catch(() => {});
+      } else if (!playing && !bgAudioElement.paused) {
+        bgAudioElement.pause();
+      }
     }
   }
 
-  /* GESTIÓN DE CARGA DE CANCIONES */
+  $: syncAudioWithVideo(currentTime, isPlaying);
+
+  function previewSongSample(song) {
+    if (!bgAudioElement) return;
+    if (isSamplingTrack && samplingSongId === song.id) {
+      stopSongSample();
+      return;
+    }
+    if (isSamplingTrack) stopSongSample();
+
+    wasVideoPlayingBeforeSample = isPlaying;
+    if (videoElement && !videoElement.paused) {
+      videoElement.pause();
+      studioStore.setIsPlaying(false);
+    }
+
+    isSamplingTrack = true;
+    samplingSongId = song.id;
+
+    const midpoint = Math.max(0, (song.duration || 120) * 0.45);
+    bgAudioElement.src = song.url;
+    bgAudioElement.currentTime = midpoint;
+    bgAudioElement.volume = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
+    bgAudioElement.play().catch(() => {});
+
+    if (samplingTimer) clearTimeout(samplingTimer);
+    samplingTimer = setTimeout(() => { stopSongSample(); }, 6000);
+  }
+
+  function stopSongSample() {
+    if (samplingTimer) clearTimeout(samplingTimer);
+    isSamplingTrack = false;
+    samplingSongId = null;
+    if (bgAudioElement) bgAudioElement.pause();
+
+    if (wasVideoPlayingBeforeSample && videoElement) {
+      videoElement.play();
+      studioStore.setIsPlaying(true);
+    }
+    wasVideoPlayingBeforeSample = false;
+    syncAudioWithVideo(currentTime, isPlaying);
+  }
+
   function handleMusicUpload(e) {
     const files = Array.from(e.target.files || []).filter(f => {
       return f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(f.name);
@@ -150,27 +387,20 @@
 
     const newTracks = files.map(file => {
       const url = URL.createObjectURL(file);
-      return {
-        id: Date.now() + Math.random(),
-        name: file.name.replace(/\.[^/.]+$/, ''),
-        file,
-        url,
-        duration: 180
-      };
+      return { id: Date.now() + Math.random(), name: file.name.replace(/\.[^/.]+$/, ''), file, url, duration: 180 };
     });
 
     bgPlaylist = [...bgPlaylist, ...newTracks];
-
     newTracks.forEach(track => {
       const a = new Audio(track.url);
       a.onloadedmetadata = () => {
         if (Number.isFinite(a.duration) && a.duration > 0) {
           track.duration = Math.round(a.duration);
           bgPlaylist = [...bgPlaylist];
+          handleRangeChange();
         }
       };
     });
-
     e.target.value = '';
   }
 
@@ -186,260 +416,93 @@
 
   function removeSong(id) {
     bgPlaylist = bgPlaylist.filter(s => s.id !== id);
-    if (manualPlayingId === id && bgAudioElement) {
-      bgAudioElement.pause();
-      manualPlayingId = null;
-    }
+    if (samplingSongId === id) stopSongSample();
+    handleRangeChange();
   }
 
   function clearPlaylist() {
     bgPlaylist = [];
+    if (samplingSongId) stopSongSample();
     if (bgAudioElement) {
       bgAudioElement.pause();
       bgAudioElement.src = '';
-      manualPlayingId = null;
     }
   }
 
-  /* REPRODUCIR / PAUSAR CANCIÓN INDIVIDUAL */
-  function togglePlaySong(song) {
-    if (!bgAudioElement) return;
-
-    if (manualPlayingId === song.id && !bgAudioElement.paused) {
-      bgAudioElement.pause();
-      manualPlayingId = null;
-    } else {
-      manualPlayingId = song.id;
-      bgAudioElement.src = song.url;
-      bgAudioElement.currentTime = 0;
-      bgAudioElement.volume = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
-      bgAudioElement.play().catch(() => {});
-    }
-  }
-
-  /* ALEATORIO ANTI-REPETICIÓN VISIBLE */
-  function shuffleVisiblePlaylist() {
-    if (bgPlaylist.length <= 2) return;
-
+  function shufflePlaylistOnce() {
+    if (bgPlaylist.length <= 1) return;
     const copy = [...bgPlaylist];
-    const shuffled = [];
-    const history = [];
-
-    while (copy.length > 0) {
-      let candidates = copy.filter(s => !history.includes(s.id));
-      if (candidates.length === 0) candidates = copy;
-
-      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-      shuffled.push(chosen);
-      history.push(chosen.id);
-      if (history.length > 2) history.shift();
-
-      const idx = copy.findIndex(s => s.id === chosen.id);
-      copy.splice(idx, 1);
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
     }
-
-    bgPlaylist = shuffled;
+    bgPlaylist = copy;
+    showFeedback('Lista mezclada');
   }
 
-  function toggleShuffle() {
-    bgSettings.shuffle = !bgSettings.shuffle;
-    if (bgSettings.shuffle) {
-      shuffleVisiblePlaylist();
-    }
-  }
-
-  /* CONTROL DE VOLÚMENES INDEPENDIENTES */
-  $: if (bgAudioElement) {
-    bgAudioElement.volume = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
-  }
-
-  $: if (videoElement) {
-    videoElement.volume = Math.max(0, Math.min(1.0, videoAudioSettings.volume ?? 1.0));
-    videoElement.muted = videoAudioSettings.muted;
-  }
-
-  /* SINCRONIZACIÓN CON EL VÍDEO (SOLO SI EL VÍDEO ESTÁ EN PLAY) */
-  function syncPlaylistAudio(t, playing) {
-    if (!bgAudioElement || !bgPlaylist.length) return;
-
-    // Si el vídeo no se está reproduciendo, NO interrumpir preescuchas manuales
-    if (!playing) {
-      if (!manualPlayingId && !bgAudioElement.paused) {
-        bgAudioElement.pause();
-      }
-      return;
-    }
-
-    manualPlayingId = null;
-    const totalDur = bgPlaylist.reduce((acc, s) => acc + (s.duration || 120), 0);
-    if (totalDur <= 0) return;
-
-    let timeInPlaylist = Math.max(0, t);
-    if (bgSettings.loop) {
-      timeInPlaylist = timeInPlaylist % totalDur;
-    } else if (timeInPlaylist >= totalDur) {
-      bgAudioElement.pause();
-      return;
-    }
-
-    let accumulated = 0;
-    let targetSong = bgPlaylist[0];
-    let offsetInSong = 0;
-
-    for (let i = 0; i < bgPlaylist.length; i++) {
-      const s = bgPlaylist[i];
-      const sDur = s.duration || 120;
-      if (timeInPlaylist >= accumulated && timeInPlaylist < accumulated + sDur) {
-        targetSong = s;
-        offsetInSong = timeInPlaylist - accumulated;
-        break;
-      }
-      accumulated += sDur;
-    }
-
-    if (!targetSong) return;
-
-    if (bgAudioElement.src !== targetSong.url) {
-      bgAudioElement.src = targetSong.url;
-      if (Number.isFinite(offsetInSong) && offsetInSong >= 0) {
-        bgAudioElement.currentTime = offsetInSong;
-      }
-      bgAudioElement.play().catch(() => {});
-    } else {
-      if (Number.isFinite(offsetInSong) && Math.abs(bgAudioElement.currentTime - offsetInSong) > 0.4) {
-        try {
-          bgAudioElement.currentTime = Math.max(0, offsetInSong);
-        } catch (e) {}
-      }
-      if (bgAudioElement.paused) {
-        bgAudioElement.play().catch(() => {});
-      }
-    }
-  }
-
-  $: syncPlaylistAudio(currentTime, isPlaying);
-
-  function getSupportedVideoMimeType() {
-    if (typeof MediaRecorder === 'undefined') return null;
-    const candidates = [
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
-      'video/webm',
-      'video/mp4'
-    ];
-    for (const t of candidates) {
-      if (MediaRecorder.isTypeSupported(t)) return t;
-    }
-    return '';
-  }
-
-  function recordSingleConfettiWebm(isP1) {
-    return new Promise((resolve, reject) => {
-      try {
-        const mimeType = getSupportedVideoMimeType();
-        if (mimeType === null) {
-          return reject(new Error('MediaRecorder no compatible'));
-        }
-
-        const c = document.createElement('canvas');
-        c.width = 1920;
-        c.height = 1080;
-        c.style.position = 'fixed';
-        c.style.opacity = '0';
-        c.style.pointerEvents = 'none';
-        document.body.appendChild(c);
-
-        const myConfetti = confetti.create(c, { resize: false, useWorker: false });
-        const stream = c.captureStream ? c.captureStream(30) : null;
-        if (!stream) {
-          document.body.removeChild(c);
-          return reject(new Error('captureStream no disponible'));
-        }
-
-        const options = mimeType ? { mimeType } : {};
-        const recorder = new MediaRecorder(stream, options);
-        const chunks = [];
-
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) chunks.push(e.data);
-        };
-
-        recorder.onstop = () => {
-          try { document.body.removeChild(c); } catch (e) {}
-          const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
-          resolve(blob);
-        };
-
-        recorder.onerror = (e) => {
-          try { document.body.removeChild(c); } catch (err) {}
-          reject(e);
-        };
-
-        recorder.start();
-
-        myConfetti({
-          particleCount: 100,
-          angle: isP1 ? 52 : 128,
-          spread: 75,
-          startVelocity: 55,
-          gravity: 1.25,
-          origin: { x: isP1 ? 0.04 : 0.96, y: 0.92 },
-          colors: ['#f59e0b', '#fbbf24', '#ffffff', '#10b981', '#3b82f6'],
-          ticks: 95,
-          decay: 0.92
-        });
-
-        setTimeout(() => {
-          try {
-            if (recorder.state !== 'inactive') recorder.stop();
-          } catch (e) {}
-        }, 2200);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  async function checkAndRecordTrueConfetti() {
-    try {
-      const res = await fetch('/api/check-confetti-webm');
-      const data = await res.json();
-      if (data.ready) return;
-
-      const blobP1 = await recordSingleConfettiWebm(true);
-      await fetch('/api/upload-confetti-webm?player=p1', { method: 'POST', body: blobP1 });
-
-      const blobP2 = await recordSingleConfettiWebm(false);
-      await fetch('/api/upload-confetti-webm?player=p2', { method: 'POST', body: blobP2 });
-    } catch (e) {}
+  /* ==================== AUTO-OCULTADO A 2.5s (EN PLAY Y EN PAUSA) ==================== */
+  function resetControlsTimeout() {
+    showControls = true;
+    if (hideControlsTimer) clearTimeout(hideControlsTimer);
+    // Se oculta a los 2.5 segundos de inactividad del mouse SIEMPRE
+    hideControlsTimer = setTimeout(() => {
+      showControls = false;
+    }, 2500);
   }
 
   onMount(() => {
-    checkAndRecordTrueConfetti();
     window.addEventListener('keydown', handleKeyDown);
 
     if (videoContainer) {
-      resizeObserver = new ResizeObserver(() => {
-        updatePreviewScale();
-      });
+      resizeObserver = new ResizeObserver(() => updatePreviewScale());
       resizeObserver.observe(videoContainer);
       updatePreviewScale();
     }
 
-    const onFullscreenChange = () => {
-      isFullscreen = !!document.fullscreenElement;
-      resetControlsTimeout();
-      setTimeout(updatePreviewScale, 50);
-    };
-    document.addEventListener('fullscreenchange', onFullscreenChange);
+    autoSaveTimer = setInterval(() => {
+      if ($studioStore.videoFile && $studioStore.keyframes.length > 0) {
+        const payload = buildProjectPayload();
+        studioStore.autoSaveSilent(payload);
+      }
+    }, 1000 * 60 * 5);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('fullscreenchange', onFullscreenChange);
       if (resizeObserver) resizeObserver.disconnect();
       if (hideControlsTimer) clearTimeout(hideControlsTimer);
+      if (autoSaveTimer) clearInterval(autoSaveTimer);
+      if (samplingTimer) clearTimeout(samplingTimer);
     };
   });
+
+  function updateVideoAspect() {
+    if (videoElement && videoElement.videoWidth && videoElement.videoHeight) {
+      videoAspectCss = `${videoElement.videoWidth} / ${videoElement.videoHeight}`;
+    }
+  }
+
+  function updatePreviewScale() {
+    if (videoContainer) {
+      const w = videoContainer.clientWidth;
+      if (w > 0) previewScale = w / 1920;
+    }
+  }
+
+  function handleKeyDown(e) {
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return;
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      togglePlay();
+    } else if (e.code === 'ArrowRight') {
+      e.preventDefault();
+      seek(currentTime + 5);
+    } else if (e.code === 'ArrowLeft') {
+      e.preventDefault();
+      seek(currentTime - 5);
+    }
+  }
 
   $: videoUrl = $studioStore.videoUrl;
   $: currentTime = $studioStore.currentTime;
@@ -448,11 +511,41 @@
   $: keyframes = $studioStore.keyframes;
   $: renderProgress = $studioStore.renderProgress;
 
-  $: if (isPlaying) {
+  function togglePlay() {
+    if (!videoElement) return;
+    if (isSamplingTrack) stopSongSample();
     resetControlsTimeout();
-  } else {
-    showControls = true;
-    if (hideControlsTimer) clearTimeout(hideControlsTimer);
+    if (videoElement.paused) {
+      videoElement.play();
+      studioStore.setIsPlaying(true);
+    } else {
+      videoElement.pause();
+      studioStore.setIsPlaying(false);
+    }
+  }
+
+  function seek(t) {
+    if (!videoElement) return;
+    resetControlsTimeout();
+    const safeT = Math.max(0, Math.min(duration || 0, t));
+    videoElement.currentTime = safeT;
+    studioStore.setTime(safeT);
+    syncAudioWithVideo(safeT, isPlaying);
+
+    playedKeyframeIds.forEach(id => {
+      const kf = keyframes.find(k => k.id === id);
+      if (kf && kf.time > safeT) {
+        playedKeyframeIds.delete(id);
+      }
+    });
+  }
+
+  function formatTime(s) {
+    if (!s || isNaN(s)) return '00:00:00';
+    const hrs = Math.floor(s / 3600);
+    const mins = Math.floor((s % 3600) / 60);
+    const secs = Math.floor(s % 60);
+    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 
   function playClickAudio(type) {
@@ -461,7 +554,6 @@
       if (type === 'point-plus') soundPath = '/sounds/+1 Point.mp3';
       else if (type === 'point-minus') soundPath = '/sounds/-1 Point.mp3';
       else if (type === 'game-plus') soundPath = '/sounds/+1 Games.mp3';
-
       if (soundPath) {
         const a = new Audio(soundPath);
         a.volume = 0.5;
@@ -470,7 +562,54 @@
     } catch (e) {}
   }
 
-  /* ==================== TIMELINE ==================== */
+  function triggerKeyframeWithAutosave(time, type, payload, sound = true) {
+    const shouldSave = studioStore.addKeyframe(time, type, payload, sound, true);
+    if (shouldSave) {
+      setTimeout(() => { 
+        const p = buildProjectPayload();
+        studioStore.autoSaveSilent(p);
+      }, 1000);
+    }
+  }
+
+  function markBalls(playerKey, delta) {
+    playClickAudio(delta > 0 ? 'point-plus' : 'point-minus');
+    triggerKeyframeWithAutosave(currentTime, 'adjustBalls', { playerKey, delta }, false);
+  }
+
+  function markGames(playerKey, delta) {
+    if (delta > 0) playClickAudio('game-plus');
+    triggerKeyframeWithAutosave(currentTime, 'adjustGames', { playerKey, delta }, false);
+  }
+
+  function markPocket(playerKey, pocket) {
+    triggerKeyframeWithAutosave(currentTime, 'setPocket', { playerKey, pocket }, false);
+  }
+
+  function markSwitchTurn() {
+    const nextTurn = activeState.turns.active === 'p1' ? 'p2' : 'p1';
+    triggerKeyframeWithAutosave(currentTime, 'switchTurn', { active: nextTurn }, false);
+  }
+
+  function markToggleTurns() {
+    const nextEnabled = !activeState.turns.enabled;
+    triggerKeyframeWithAutosave(currentTime, 'toggleTurns', { enabled: nextEnabled }, false);
+  }
+
+  let soundToggle = true;
+  let lastCheckedTime = 0;
+
+  function markEffect(effect, playerKey) {
+    lastCheckedTime = currentTime;
+    triggerKeyframeWithAutosave(currentTime, 'effect', { effect, playerKey }, soundToggle);
+    liveEffect.set({ effect, playerKey, soundEnabled: soundToggle, id: Date.now() });
+  }
+
+  function markTickerToggle(visible) {
+    triggerKeyframeWithAutosave(currentTime, 'toggleTicker', { visible }, false);
+  }
+
+  /* ESTADO REACTIVO HISTÓRICO: Si retrocedes el video, la cinta vuelve a sus sponsors del pasado */
   $: activeState = (() => {
     let state = {
       p1: { ...studioConfig.p1, balls: 0, games: 0 },
@@ -482,7 +621,7 @@
       uiScale: { ...studioConfig.uiScale },
       ticker: {
         visible: studioConfig.ticker.visible,
-        items: JSON.parse(JSON.stringify(studioConfig.ticker.items))
+        items: initialTickerItems // Empieza SIEMPRE con el estado base a T=0
       }
     };
     
@@ -507,17 +646,26 @@
       } else if (k.actionType === 'toggleTicker') {
         state.ticker.visible = k.payload.visible;
       } else if (k.actionType === 'setTickerItems') {
-        state.ticker.items = JSON.parse(JSON.stringify(k.payload.items));
+        state.ticker.items = k.payload.items;
       }
     }
     return state;
   })();
 
-  let lastCheckedTime = 0;
+  /* Disparo de sonidos sin duplicaciones */
   $: {
     if (isPlaying && Math.abs(currentTime - lastCheckedTime) > 0.08) {
       const crossed = keyframes.filter(k => k.time > lastCheckedTime && k.time <= currentTime);
       crossed.forEach(ev => {
+        if (playedKeyframeIds.has(ev.id)) return;
+
+        if (ev.isManual && Date.now() - (ev.createdTimestamp || 0) < 1000) {
+          playedKeyframeIds.add(ev.id);
+          return;
+        }
+
+        playedKeyframeIds.add(ev.id);
+
         if (ev.actionType === 'adjustBalls') {
           playClickAudio(ev.payload.delta > 0 ? 'point-plus' : 'point-minus');
         } else if (ev.actionType === 'adjustGames' && ev.payload.delta > 0) {
@@ -537,142 +685,7 @@
     }
   }
 
-  function handleVideoUpload(e) {
-    const file = e.target.files?.[0] || e.dataTransfer?.files?.[0];
-    if (file) studioStore.setVideo(file);
-  }
-
-  function togglePlay() {
-    if (!videoElement) return;
-    if (videoElement.paused) {
-      videoElement.play();
-      studioStore.setIsPlaying(true);
-    } else {
-      videoElement.pause();
-      studioStore.setIsPlaying(false);
-    }
-  }
-
-  function seek(t) {
-    if (!videoElement) return;
-    const safeT = Math.max(0, Math.min(duration || 0, t));
-    videoElement.currentTime = safeT;
-    studioStore.setTime(safeT);
-  }
-
-  function toggleFullscreen() {
-    if (!videoContainer) return;
-    if (!document.fullscreenElement) {
-      videoContainer.requestFullscreen().catch(() => {});
-      isFullscreen = true;
-    } else {
-      document.exitFullscreen().catch(() => {});
-      isFullscreen = false;
-    }
-  }
-
-  function formatTime(s) {
-    if (!s || isNaN(s)) return '00:00:00';
-    const hrs = Math.floor(s / 3600);
-    const mins = Math.floor((s % 3600) / 60);
-    const secs = Math.floor(s % 60);
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-
-  let soundToggle = true;
-
-  function markBalls(playerKey, delta) {
-    playClickAudio(delta > 0 ? 'point-plus' : 'point-minus');
-    studioStore.addKeyframe(currentTime, 'adjustBalls', { playerKey, delta }, false);
-  }
-
-  function markGames(playerKey, delta) {
-    if (delta > 0) playClickAudio('game-plus');
-    studioStore.addKeyframe(currentTime, 'adjustGames', { playerKey, delta }, false);
-  }
-
-  function markPocket(playerKey, pocket) {
-    studioStore.addKeyframe(currentTime, 'setPocket', { playerKey, pocket }, false);
-  }
-
-  function markSwitchTurn() {
-    const nextTurn = activeState.turns.active === 'p1' ? 'p2' : 'p1';
-    studioStore.addKeyframe(currentTime, 'switchTurn', { active: nextTurn }, false);
-  }
-
-  function markToggleTurns() {
-    const nextEnabled = !activeState.turns.enabled;
-    studioStore.addKeyframe(currentTime, 'toggleTurns', { enabled: nextEnabled }, false);
-  }
-
-  /* REGISTRO DE EMOJI SIN DOBLE DISPARO */
-  function markEffect(effect, playerKey) {
-    lastCheckedTime = currentTime; // Evita que el watcher vuelva a dispararlo en milisegundos
-    studioStore.addKeyframe(currentTime, 'effect', { effect, playerKey }, soundToggle);
-    liveEffect.set({ effect, playerKey, soundEnabled: soundToggle, id: Date.now() });
-  }
-
-  function markTickerToggle(visible) {
-    studioStore.addKeyframe(currentTime, 'toggleTicker', { visible }, false);
-  }
-
-  let newTickerText = '';
-  let newTickerType = 'sponsor';
-  let newTickerLogo = '';
-  let logoUploadTab = 'file';
-
-  function handleTickerLogoFile(e) {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        newTickerLogo = ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
-  }
-
-  function addStudioTickerItem() {
-    if (newTickerText.trim()) {
-      const updated = [
-        ...activeState.ticker.items,
-        {
-          id: Date.now(),
-          type: newTickerType,
-          text: newTickerText.trim().toUpperCase(),
-          logoUrl: newTickerLogo.trim(),
-          active: true
-        }
-      ];
-      newTickerText = '';
-      newTickerLogo = '';
-      studioStore.addKeyframe(currentTime, 'setTickerItems', { items: updated }, false);
-    }
-  }
-
-  function toggleStudioTickerItem(id) {
-    const updated = activeState.ticker.items.map(i => i.id === id ? { ...i, active: !i.active } : i);
-    studioStore.addKeyframe(currentTime, 'setTickerItems', { items: updated }, false);
-  }
-
-  function removeStudioTickerItem(id) {
-    const updated = activeState.ticker.items.filter(i => i.id !== id);
-    studioStore.addKeyframe(currentTime, 'setTickerItems', { items: updated }, false);
-  }
-
-  function handleCancelRender() {
-    const ok = confirm('¿Estás seguro de que deseas cancelar el renderizado?');
-    if (!ok) return;
-
-    if (renderWs && renderWs.readyState === WebSocket.OPEN) {
-      renderWs.send(JSON.stringify({ type: 'CANCEL_RENDER' }));
-      renderWs.close();
-    }
-    renderWs = null;
-    isUploadingForRender = false;
-    studioStore.setRenderProgress({ active: false, percent: 0, fps: 0, eta: '', downloadUrl: null });
-  }
-
+  /* Captura y Render */
   async function captureCleanPng(element, options = {}) {
     let svgDataUrl = await htmlToImage.toSvg(element, options);
     svgDataUrl = svgDataUrl.replace(/\b(width|height):\s*([0-9.]+)(?!px|%|em|rem|vw|vh)/gi, '$1: $2px');
@@ -699,12 +712,10 @@
     return canvas.toDataURL('image/png');
   }
 
-  /* RENDER FINAL */
   let isUploadingForRender = false;
 
   async function triggerRender() {
     if (!$studioStore.videoFile) return;
-
     isUploadingForRender = true;
 
     try {
@@ -713,9 +724,7 @@
       const hudSnapshots = [];
       const tickerSnapshots = [];
 
-      if (document.fonts) {
-        await document.fonts.ready;
-      }
+      if (document.fonts) await document.fonts.ready;
 
       const scoreEvents = keyframes.filter(k => 
         k.actionType === 'adjustBalls' || k.actionType === 'adjustGames' || k.actionType === 'setPocket' || k.actionType === 'switchTurn'
@@ -729,21 +738,17 @@
         seek(tStart + 0.02);
         await new Promise(r => setTimeout(r, 60));
 
-        const dataUrl = await captureCleanPng(hudCard, {
-          pixelRatio: 2,
-          skipFonts: true
-        });
-
-        hudSnapshots.push({
-          start: tStart,
-          end: tEnd,
-          dataUrl
-        });
+        const dataUrl = await captureCleanPng(hudCard, { pixelRatio: 2, skipFonts: true });
+        hudSnapshots.push({ start: tStart, end: tEnd, dataUrl });
       }
 
+      // Cinta congelada en Frame 0 exacto sin cortes
       const tickerEvents = keyframes.filter(k => k.actionType === 'setTickerItems' || k.actionType === 'toggleTicker');
       const sortedTickerTimes = [0, ...tickerEvents.map(k => k.time), duration].sort((a,b)=>a-b);
       const uniqueTickerTimes = [...new Set(sortedTickerTimes)];
+
+      isTickerFrozen = true;
+      await new Promise(r => setTimeout(r, 50));
 
       for (let i = 0; i < uniqueTickerTimes.length - 1; i++) {
         const tStart = uniqueTickerTimes[i];
@@ -753,26 +758,13 @@
 
         if (activeState.ticker.visible && activeState.ticker.items.some(it => it.active) && tickSegment) {
           try {
-            const dataUrl = await captureCleanPng(tickSegment, {
-              pixelRatio: 1,
-              skipFonts: true
-            });
-            tickerSnapshots.push({
-              start: tStart,
-              end: tEnd,
-              visible: true,
-              dataUrl,
-              segmentWidth: tickSegment.scrollWidth || tickSegment.offsetWidth || 1200
-            });
+            const dataUrl = await captureCleanPng(tickSegment, { pixelRatio: 1, skipFonts: true });
+            tickerSnapshots.push({ start: tStart, end: tEnd, visible: true, dataUrl });
           } catch (e) {}
         }
       }
 
-      if (hudSnapshots.length === 0) {
-        isUploadingForRender = false;
-        alert('Error: No se pudo generar la captura del marcador.');
-        return;
-      }
+      isTickerFrozen = false;
 
       const resVideo = await fetch('/api/upload-media', {
         method: 'POST',
@@ -783,16 +775,15 @@
 
       const uploadedPlaylist = [];
       for (const song of bgPlaylist) {
-        const resMusic = await fetch('/api/upload-media', {
-          method: 'POST',
-          headers: { 'x-file-name': encodeURIComponent(song.file.name) },
-          body: song.file
-        });
-        const musicData = await resMusic.json();
-        uploadedPlaylist.push({
-          filename: musicData.filename,
-          duration: song.duration
-        });
+        if (song.file) {
+          const resMusic = await fetch('/api/upload-media', {
+            method: 'POST',
+            headers: { 'x-file-name': encodeURIComponent(song.file.name) },
+            body: song.file
+          });
+          const musicData = await resMusic.json();
+          uploadedPlaylist.push({ filename: musicData.filename, duration: song.duration });
+        }
       }
 
       isUploadingForRender = false;
@@ -828,8 +819,21 @@
         }
       };
     } catch (err) {
+      isTickerFrozen = false;
       isUploadingForRender = false;
-      alert('Error en el proceso de renderizado: ' + err.message);
+      alert('Error en el renderizado: ' + err.message);
+    }
+  }
+
+  function handleCancelRender() {
+    if (confirm('¿Deseas cancelar el renderizado?')) {
+      if (renderWs && renderWs.readyState === WebSocket.OPEN) {
+        renderWs.send(JSON.stringify({ type: 'CANCEL_RENDER' }));
+        renderWs.close();
+      }
+      renderWs = null;
+      isUploadingForRender = false;
+      studioStore.setRenderProgress({ active: false, percent: 0, fps: 0, eta: '', downloadUrl: null });
     }
   }
 </script>
@@ -850,26 +854,70 @@
 
 <div class="min-h-screen bg-[#07080b] text-white font-sans flex flex-col overflow-x-hidden select-none">
   
-  <header class="h-14 border-b border-white/10 px-6 flex items-center justify-between shrink-0 bg-[#0c0e15]">
-    <div class="flex items-center gap-3">
-      <Film size={20} class="text-amber-400" />
+  <!-- CABECERA LIMPIA SIN MENSAJES DE NOMBRE AMONTONADOS -->
+  <header class="h-14 border-b border-white/10 px-4 sm:px-6 flex items-center justify-between shrink-0 bg-[#0c0e15] z-30">
+    <div class="flex items-center gap-3 min-w-0">
+      <Film size={20} class="text-amber-400 shrink-0" />
       <div>
         <h1 class="text-sm font-black tracking-wider uppercase font-mono text-white">Estudio de Post-Producción</h1>
-        <p class="text-[10px] text-neutral-400 font-mono">Editor VOD Autónomo (Independiente)</p>
+        <p class="text-[10px] text-neutral-400 font-mono">Editor VOD Profesional para Partidas de Billar</p>
       </div>
     </div>
 
-    <div class="flex items-center gap-4">
-      <a href="?view=control" class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 transition">
+    <!-- BOTONERA DE CONTROL Y ARCHIVO -->
+    <div class="flex items-center gap-2 sm:gap-3">
+      
+      {#if saveFeedbackMessage}
+        <span class="text-xs font-mono font-bold text-emerald-400 flex items-center gap-1 animate-pulse">
+          {saveFeedbackMessage}
+        </span>
+      {/if}
+
+      <!-- Cambiar Video (Re-link manteniendo marcas) -->
+      {#if videoUrl}
+        <button
+          on:click={() => relinkFileInput.click()}
+          class="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 flex items-center gap-1.5 transition text-neutral-300 hover:text-white"
+          title="Cambiar archivo de video manteniendo todas las marcas"
+        >
+          <FileVideo size={14} class="text-amber-400" />
+          <span class="hidden md:inline">Cambiar Video</span>
+        </button>
+      {/if}
+
+      <!-- Guardar Proyecto -->
+      <button
+        on:click={() => handleSaveProject(false)}
+        class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 flex items-center gap-1.5 transition text-white"
+        title="Guardar archivo .billiard"
+      >
+        <Save size={14} class="text-amber-400" />
+        <span>Guardar</span>
+      </button>
+
+      <!-- Abrir Proyecto (SELECTOR DIRECTO INFALIBLE) -->
+      <button
+        on:click={() => projectFileInput.click()}
+        class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 flex items-center gap-1.5 transition text-white"
+        title="Abrir un archivo .billiard de tu PC"
+      >
+        <Folder size={14} class="text-amber-400" />
+        <span>Abrir</span>
+      </button>
+
+      <input bind:this={projectFileInput} type="file" accept=".billiard,.json" on:change={handleProjectFileLoad} class="hidden" />
+      <input bind:this={relinkFileInput} type="file" accept="video/*" on:change={handleRelinkVideo} class="hidden" />
+
+      <a href="?view=control" class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 transition text-neutral-300">
         Modo Directo
       </a>
 
       {#if videoUrl}
         <button
           on:click={triggerRender}
-          class="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-2 shadow-lg transition active:scale-95"
+          class="px-4 sm:px-5 py-1.5 sm:py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 shadow-lg transition active:scale-95"
         >
-          <Download size={16} /> Renderizar y Descargar Video
+          <Download size={15} /> <span class="hidden sm:inline">Renderizar Video</span>
         </button>
       {/if}
     </div>
@@ -879,13 +927,14 @@
     
     <div class="flex flex-col gap-3 min-w-0">
       
-      <!-- REPRODUCTOR MÁS ALTO (68vh), CENTRADO Y SIN BARRAS NEGRAS -->
+      <!-- REPRODUCTOR DE VIDEO (AUTO-OCULTA CONTROLES A LOS 2.5s EN PLAY Y PAUSA) -->
       <div 
         bind:this={videoContainer}
         tabindex="0"
         on:mousemove={resetControlsTimeout}
+        on:mouseenter={resetControlsTimeout}
         class="relative bg-black rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center shadow-2xl group [transform:translateZ(0)] mx-auto w-full outline-none
-          {isFullscreen && !showControls ? 'cursor-none' : ''}"
+          {!showControls ? 'cursor-none' : ''}"
         style="
           height: 68vh;
           max-height: 68vh;
@@ -893,7 +942,10 @@
           max-width: calc(68vh * ({videoAspectCss}));
         "
         on:dragover|preventDefault
-        on:drop|preventDefault={handleVideoUpload}
+        on:drop|preventDefault={(e) => {
+          const file = e.dataTransfer?.files?.[0];
+          if (file) studioStore.setVideo(file);
+        }}
       >
         {#if videoUrl}
           <video
@@ -905,6 +957,7 @@
               studioStore.setDuration(videoElement.duration);
               updateVideoAspect();
               updatePreviewScale();
+              if (bgSettings.rangeEnd === 0) bgSettings.rangeEnd = videoElement.duration;
             }}
           ></video>
 
@@ -923,7 +976,9 @@
             <StudioTicker 
               items={activeState.ticker.items} 
               visible={activeState.ticker.visible} 
-              scale={activeState.uiScale.ticker} 
+              scale={activeState.uiScale.ticker}
+              isFrozen={isTickerFrozen}
+              isPlaying={isPlaying}
             />
           </div>
 
@@ -934,11 +989,27 @@
             class="absolute inset-0 pointer-events-none z-40 w-full h-full"
           ></canvas>
 
-          <!-- CONTROLES INTEGRADOS -->
+          <!-- CONTROLES DEL REPRODUCTOR (DESAPARECEN TRAS 2.5s INCLUSO EN PAUSA) -->
           <div 
-            class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-3 flex flex-col gap-1.5 transition-opacity duration-300 z-50
+            class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent p-3 flex flex-col gap-1 transition-opacity duration-300 z-50
             {showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
           >
+            
+            <!-- PISTA SUPERIOR: LÍNEA DE RANGO DE MÚSICA (CLARAMENTE ENCIMA DE LA BARRA) -->
+            {#if bgPlaylist.length > 0 && duration > 0}
+              <div class="w-full h-2 relative mb-1 flex items-center pointer-events-none">
+                <div
+                  class="absolute h-1.5 bg-amber-400 rounded-full shadow-[0_0_8px_rgba(251,191,36,0.8)] border border-amber-300"
+                  style="
+                    left: {(Math.max(0, bgSettings.rangeStart || 0) / duration) * 100}%;
+                    width: {(Math.max(0, (bgSettings.rangeEnd || duration) - (bgSettings.rangeStart || 0)) / duration) * 100}%;
+                  "
+                  title="Música de fondo activa"
+                ></div>
+              </div>
+            {/if}
+
+            <!-- BARRA DE TIEMPO DEL VIDEO (SEPARADA DEBAJO) -->
             <div 
               class="relative w-full h-3 flex items-center cursor-pointer select-none"
               on:click={(e) => {
@@ -951,16 +1022,16 @@
                 <div class="h-full bg-amber-400" style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"></div>
               </div>
 
-              {#each keyframes as kf (kf.id)}
+              {#each keyframes.filter(k => duration > 0 ? k.time <= duration : true) as kf (kf.id)}
                 <div
-                  class="absolute w-2 h-2 rounded-full -translate-x-1/2 pointer-events-none shadow-md
+                  class="absolute w-2 h-2 rounded-full -translate-x-1/2 pointer-events-none shadow-md z-20
                     {kf.actionType === 'adjustBalls' ? 'bg-amber-400' : kf.actionType === 'adjustGames' ? 'bg-emerald-400' : kf.actionType === 'switchTurn' ? 'bg-blue-400' : kf.actionType === 'setTickerItems' ? 'bg-teal-400' : 'bg-purple-400'}"
                   style="left: {duration > 0 ? (kf.time / duration) * 100 : 0}%"
                 ></div>
               {/each}
             </div>
 
-            <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center justify-between text-xs pt-0.5">
               <div class="flex items-center gap-3">
                 <button on:click={togglePlay} class="text-white hover:text-amber-400 transition">
                   {#if isPlaying}<Pause size={17} />{:else}<Play size={17} />{/if}
@@ -974,7 +1045,10 @@
 
               <div class="flex items-center gap-3">
                 <span class="hidden sm:inline text-[10px] text-neutral-400 font-mono">Espacio: Pausa | ← / →: ±5s</span>
-                <button on:click={toggleFullscreen} class="text-white hover:text-amber-400 transition">
+                <button on:click={() => {
+                  if (!document.fullscreenElement) videoContainer.requestFullscreen().catch(() => {});
+                  else document.exitFullscreen().catch(() => {});
+                }} class="text-white hover:text-amber-400 transition">
                   {#if isFullscreen}<Minimize size={17} />{:else}<Maximize size={17} />{/if}
                 </button>
               </div>
@@ -984,15 +1058,18 @@
         {:else}
           <div class="flex flex-col items-center justify-center gap-3 p-8 text-center">
             <Upload size={38} class="text-amber-400 animate-bounce" />
-            <span class="text-sm font-bold text-neutral-300">Arrastrá aquí tu video grabado (.mp4, .mkv, .mov)</span>
+            <span class="text-sm font-bold text-neutral-300">Arrastra aquí el video de tu partida (.mp4, .mkv, .mov)</span>
             <span class="text-xs text-neutral-500">o</span>
             <button
               on:click={() => fileInput.click()}
               class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl transition"
             >
-              Seleccionar archivo de tu equipo
+              Seleccionar video de tu equipo
             </button>
-            <input bind:this={fileInput} type="file" accept="video/*" on:change={handleVideoUpload} class="hidden" />
+            <input bind:this={fileInput} type="file" accept="video/*" on:change={(e) => {
+              const file = e.target.files?.[0];
+              if (file) studioStore.setVideo(file);
+            }} class="hidden" />
           </div>
         {/if}
 
@@ -1072,7 +1149,6 @@
                 </div>
               </div>
 
-              <!-- BOTONES DE EMOJIS COMPACTOS CON PREVIEW ANIMADA MINIATURA SIN TEXTO -->
               <div class="grid grid-cols-4 gap-1.5 mt-2.5 p-1.5 bg-[#08090d] rounded-xl border border-white/5">
                 {#each EMOJI_REACTIONS as item}
                   <button
@@ -1080,15 +1156,12 @@
                     class="group/emo relative h-10 flex items-center justify-center rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-400 text-xl transition active:scale-90"
                   >
                     <span>{item.icon}</span>
-
-                    <!-- Miniatura flotante animada sin texto -->
-                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 p-1 bg-[#0c0e15] border border-amber-500/60 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.9)] opacity-0 group-hover/emo:opacity-100 pointer-events-none transition-all duration-150 z-50 flex items-center justify-center min-w-[46px] min-h-[46px]">
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 p-1 bg-[#0c0e15] border border-amber-500/60 rounded-xl shadow-xl opacity-0 group-hover/emo:opacity-100 pointer-events-none transition-all duration-150 z-50 flex items-center justify-center min-w-[46px] min-h-[46px]">
                       {#if item.key === 'confetti'}
                         <span class="text-2xl animate-bounce">🎉</span>
                       {:else}
                         <img src={item.img} alt="" class="w-9 h-9 object-contain" />
                       {/if}
-                      <div class="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-4 border-transparent border-t-[#0c0e15]"></div>
                     </div>
                   </button>
                 {/each}
@@ -1135,7 +1208,6 @@
                 </div>
               </div>
 
-              <!-- BOTONES DE EMOJIS COMPACTOS CON PREVIEW ANIMADA MINIATURA SIN TEXTO -->
               <div class="grid grid-cols-4 gap-1.5 mt-2.5 p-1.5 bg-[#08090d] rounded-xl border border-white/5">
                 {#each EMOJI_REACTIONS as item}
                   <button
@@ -1143,15 +1215,12 @@
                     class="group/emo relative h-10 flex items-center justify-center rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-400 text-xl transition active:scale-90"
                   >
                     <span>{item.icon}</span>
-
-                    <!-- Miniatura flotante animada sin texto -->
-                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 p-1 bg-[#0c0e15] border border-amber-500/60 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.9)] opacity-0 group-hover/emo:opacity-100 pointer-events-none transition-all duration-150 z-50 flex items-center justify-center min-w-[46px] min-h-[46px]">
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 p-1 bg-[#0c0e15] border border-amber-500/60 rounded-xl shadow-xl opacity-0 group-hover/emo:opacity-100 pointer-events-none transition-all duration-150 z-50 flex items-center justify-center min-w-[46px] min-h-[46px]">
                       {#if item.key === 'confetti'}
                         <span class="text-2xl animate-bounce">🎉</span>
                       {:else}
                         <img src={item.img} alt="" class="w-9 h-9 object-contain" />
                       {/if}
-                      <div class="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-4 border-transparent border-t-[#0c0e15]"></div>
                     </div>
                   </button>
                 {/each}
@@ -1236,28 +1305,39 @@
           </div>
         {/if}
 
+        <!-- PESTAÑA DE SPONSORS -->
         {#if activeTab === 'sponsors'}
           <div class="flex flex-col gap-3">
             
             <div class="flex items-center justify-between bg-black/40 p-2.5 rounded-xl border border-white/5">
               <div class="flex flex-col">
-                <span class="text-xs font-bold text-neutral-300">Visibilidad de la cinta en este segundo:</span>
+                <span class="text-xs font-bold text-neutral-300">Visibilidad de la cinta:</span>
                 <span class="text-[10px] text-neutral-400">Marca en [{formatTime(currentTime)}]</span>
               </div>
-              <button
-                on:click={() => markTickerToggle(!activeState.ticker.visible)}
-                class="px-4 py-2 rounded-xl text-xs font-black border flex items-center gap-2 transition {activeState.ticker.visible ? 'bg-emerald-950 border-emerald-500/60 text-emerald-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400'}"
-              >
-                {#if activeState.ticker.visible}
-                  <Eye size={16} class="text-emerald-400" /> Cinta Visible
-                {:else}
-                  <EyeOff size={16} /> Cinta Oculta
-                {/if}
-              </button>
+              
+              <div class="flex items-center gap-2">
+                <button
+                  on:click={() => markTickerToggle(!activeState.ticker.visible)}
+                  class="px-3.5 py-1.5 rounded-xl text-xs font-black border flex items-center gap-2 transition {activeState.ticker.visible ? 'bg-emerald-950 border-emerald-500/60 text-emerald-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400'}"
+                >
+                  {#if activeState.ticker.visible}
+                    <Eye size={15} class="text-emerald-400" /> Visible
+                  {:else}
+                    <EyeOff size={15} /> Oculta
+                  {/if}
+                </button>
+
+                <button
+                  on:click={applyStudioTickerChanges}
+                  class="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl flex items-center gap-1.5 shadow-md transition active:scale-95"
+                >
+                  <RefreshCw size={14} /> Aplicar Cambios en [{formatTime(currentTime)}]
+                </button>
+              </div>
             </div>
 
+            <!-- Formulario de nueva marca en borrador -->
             <div class="flex flex-col gap-3 bg-[#090b10] p-3.5 rounded-xl border border-white/5">
-              
               <div class="flex items-center gap-2">
                 <select
                   bind:value={newTickerType}
@@ -1272,16 +1352,17 @@
                 <input
                   type="text"
                   bind:value={newTickerText}
-                  on:keydown={(e) => e.key === 'Enter' && addStudioTickerItem()}
-                  placeholder="Escribe el texto de la marca o mensaje..."
+                  on:keydown={(e) => e.key === 'Enter' && addDraftTickerItem()}
+                  placeholder="Texto del sponsor o aviso..."
                   class="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white px-3 py-2 outline-none font-mono focus:border-amber-500"
                 />
 
-                <button on:click={addStudioTickerItem} class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold rounded-lg transition flex items-center gap-1 shadow-md">
-                  <Plus size={15} /> Añadir Aquí
+                <button on:click={addDraftTickerItem} class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 border border-white/10">
+                  <Plus size={15} class="text-amber-400" /> Añadir
                 </button>
               </div>
 
+              <!-- Logo de marca -->
               <div class="flex items-center justify-between bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs">
                 <div class="flex items-center gap-2">
                   <span class="text-neutral-400 font-bold flex items-center gap-1 text-[11px]"><ImagePlus size={14} class="text-amber-400" /> Logo (Opcional):</span>
@@ -1291,14 +1372,14 @@
                       on:click={() => logoUploadTab = 'file'}
                       class="text-[10px] px-2.5 py-1 rounded-md transition {logoUploadTab === 'file' ? 'bg-amber-500 text-black font-black' : 'text-neutral-400 hover:text-white'}"
                     >
-                      Subir archivo
+                      Archivo
                     </button>
                     <button
                       type="button"
                       on:click={() => logoUploadTab = 'url'}
                       class="text-[10px] px-2.5 py-1 rounded-md transition {logoUploadTab === 'url' ? 'bg-amber-500 text-black font-black' : 'text-neutral-400 hover:text-white'}"
                     >
-                      Pegar URL
+                      URL
                     </button>
                   </div>
                 </div>
@@ -1307,7 +1388,7 @@
                   {#if logoUploadTab === 'file'}
                     <label class="cursor-pointer px-3 py-1 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 text-[11px] font-bold rounded-lg transition flex items-center gap-1.5">
                       <Upload size={12} class="text-amber-400" />
-                      <span>{newTickerLogo ? 'Cambiar archivo' : 'Seleccionar imagen'}</span>
+                      <span>{newTickerLogo ? 'Cambiar imagen' : 'Seleccionar logo'}</span>
                       <input type="file" accept="image/*" on:change={handleTickerLogoFile} class="hidden" />
                     </label>
                   {:else}
@@ -1328,33 +1409,27 @@
                     </div>
                   {/if}
                 </div>
-
               </div>
-
             </div>
 
-            <div class="flex items-center justify-between text-[11px] text-neutral-400 px-1 pt-1">
-              <span>Marcas activas en este segundo ({formatTime(currentTime)}):</span>
-              <span class="text-amber-400 font-mono">Modificar aquí crea un punto en el tiempo</span>
-            </div>
-
+            <!-- Lista de marcas en borrador -->
             <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-              {#each activeState.ticker.items as item (item.id)}
+              {#each stagedTickerItems as item (item.id)}
                 <div class="flex items-center justify-between p-2 rounded-lg border {item.active ? 'bg-neutral-900/80 border-white/10' : 'bg-neutral-950/40 border-neutral-800 opacity-50'} transition">
                   <div class="flex items-center gap-2 overflow-hidden">
                     {#if item.logoUrl}
                       <img src={item.logoUrl} alt="logo" class="h-5 w-7 object-contain bg-black/50 rounded p-0.5" />
                     {/if}
-                    <span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded {item.type === 'sponsor' ? 'bg-amber-950 text-amber-400 border border-amber-500/40' : item.type === 'aviso' ? 'bg-blue-950 text-blue-400 border border-blue-500/40' : item.type === 'advertencia' ? 'bg-orange-950 text-orange-400 border border-orange-500/40' : 'bg-neutral-800 text-neutral-400'}">
+                    <span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded {item.type === 'sponsor' ? 'bg-amber-950 text-amber-400 border border-amber-500/40' : item.type === 'aviso' ? 'bg-blue-950 text-blue-400 border border-blue-500/40' : 'bg-neutral-800 text-neutral-400'}">
                       {item.type}
                     </span>
                     <span class="text-xs font-mono font-bold text-white truncate max-w-[150px]">{item.text}</span>
                   </div>
                   <div class="flex items-center gap-1 shrink-0">
-                    <button on:click={() => toggleStudioTickerItem(item.id)} class="p-1 hover:text-white text-neutral-400 transition" title={item.active ? 'Ocultar marca' : 'Activar marca'}>
+                    <button on:click={() => toggleDraftTickerItem(item.id)} class="p-1 hover:text-white text-neutral-400 transition">
                       {#if item.active}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
                     </button>
-                    <button on:click={() => removeStudioTickerItem(item.id)} class="p-1 hover:text-rose-400 text-neutral-500 transition" title="Eliminar marca">
+                    <button on:click={() => removeDraftTickerItem(item.id)} class="p-1 hover:text-rose-400 text-neutral-500 transition">
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -1403,7 +1478,7 @@
         </div>
       </div>
 
-      <!-- 2. PLAYLIST DE MÚSICA DE FONDO -->
+      <!-- 2. PLAYLIST DE MÚSICA CON RANGO INICIO/FIN Y BOTÓN MEZCLAR -->
       <div class="border-b border-white/10 pb-3 flex flex-col gap-2.5">
         <div class="flex items-center justify-between">
           <span class="text-xs font-mono font-bold text-neutral-300 flex items-center gap-1.5">
@@ -1412,23 +1487,12 @@
           
           <div class="flex items-center gap-1.5">
             {#if bgPlaylist.length > 0}
-              <button
-                on:click={clearPlaylist}
-                class="text-[10px] text-rose-400 hover:text-rose-300 font-bold px-1.5 py-1"
-              >
-                Vaciar
-              </button>
+              <button on:click={clearPlaylist} class="text-[10px] text-rose-400 hover:text-rose-300 font-bold px-1.5 py-1">Vaciar</button>
             {/if}
-            <button
-              on:click={() => musicFilesInput.click()}
-              class="text-[10px] font-bold px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1"
-            >
-              <Plus size={12} class="text-amber-400" /> Añadir canciones
+            <button on:click={() => musicFilesInput.click()} class="text-[10px] font-bold px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1">
+              <Plus size={12} class="text-amber-400" /> Canciones
             </button>
-            <button
-              on:click={() => musicFolderInput.click()}
-              class="text-[10px] font-bold px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1"
-            >
+            <button on:click={() => musicFolderInput.click()} class="text-[10px] font-bold px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1">
               <FolderOpen size={12} class="text-amber-400" /> Carpeta
             </button>
           </div>
@@ -1438,38 +1502,94 @@
         </div>
 
         {#if bgPlaylist.length > 0}
-          <div class="flex items-center justify-between text-[11px] text-neutral-400">
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" bind:checked={bgSettings.loop} class="accent-amber-500" />
-              <span>Bucle Playlist</span>
-            </label>
-            <button
-              type="button"
-              on:click={toggleShuffle}
-              class="flex items-center gap-1.5 px-2 py-0.5 rounded-lg border transition {bgSettings.shuffle ? 'bg-amber-950/70 border-amber-500/60 text-amber-300 font-bold' : 'bg-neutral-900 border-neutral-800 text-neutral-400'}"
-            >
-              <Shuffle size={12} class={bgSettings.shuffle ? 'text-amber-400' : ''} />
-              <span>{bgSettings.shuffle ? 'Aleatorio ON' : 'Aleatorio OFF'}</span>
-            </button>
-            {#if bgSettings.shuffle}
-              <button
-                on:click={shuffleVisiblePlaylist}
-                class="text-[10px] text-amber-400 hover:underline font-bold"
-              >
-                Remezclar
-              </button>
+          
+          <!-- RANGO INICIO / FIN -->
+          <div class="bg-black/40 border border-white/5 rounded-xl p-2.5 flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold text-neutral-300 flex items-center gap-1">
+                <span>Rango Activo</span>
+                <button on:click={() => showMusicInfoModal = true} class="text-neutral-400 hover:text-amber-400 transition" title="Ver explicación de la música">
+                  <Info size={13} />
+                </button>
+              </span>
+              <span class="text-[10px] font-mono text-neutral-400">Total: {formatTime(totalPlaylistSeconds)}</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+              <div class="flex items-center bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 gap-1.5">
+                <span class="text-neutral-400 text-[10px]">Inicio:</span>
+                <input
+                  type="text"
+                  value={formatTime(bgSettings.rangeStart || 0)}
+                  on:change={(e) => {
+                    const parts = e.target.value.split(':').map(Number);
+                    let sec = 0;
+                    if (parts.length === 3) sec = parts[0]*3600 + parts[1]*60 + parts[2];
+                    else if (parts.length === 2) sec = parts[0]*60 + parts[1];
+                    else sec = Number(e.target.value) || 0;
+                    bgSettings.rangeStart = Math.max(0, sec);
+                    handleRangeChange();
+                  }}
+                  class="w-full bg-transparent text-amber-400 font-bold outline-none text-center"
+                />
+              </div>
+
+              <div class="flex items-center bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 gap-1.5">
+                <span class="text-neutral-400 text-[10px]">Fin:</span>
+                <input
+                  type="text"
+                  value={formatTime(bgSettings.rangeEnd || duration || 0)}
+                  on:change={(e) => {
+                    const parts = e.target.value.split(':').map(Number);
+                    let sec = 0;
+                    if (parts.length === 3) sec = parts[0]*3600 + parts[1]*60 + parts[2];
+                    else if (parts.length === 2) sec = parts[0]*60 + parts[1];
+                    else sec = Number(e.target.value) || 0;
+                    bgSettings.rangeEnd = Math.max(bgSettings.rangeStart || 0, sec);
+                    handleRangeChange();
+                  }}
+                  class="w-full bg-transparent text-amber-400 font-bold outline-none text-center"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- INDICADOR VISUAL EN VIVO -->
+          <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] font-mono">
+            <Disc size={14} class="text-amber-400 shrink-0 {isPlaying && currentTrackInfo ? 'animate-spin' : ''}" />
+            {#if currentTrackInfo}
+              <div class="truncate flex-1 min-w-0">
+                <span class="text-amber-300 font-bold">Pista {currentTrackInfo.index + 1}:</span>
+                <span class="text-white truncate">{currentTrackInfo.song.name}</span>
+              </div>
+              <span class="text-[10px] text-amber-400 font-bold shrink-0">
+                {formatTime(currentTrackInfo.offset)} / {formatTime(currentTrackInfo.songDuration)}
+              </span>
+            {:else}
+              <span class="text-neutral-400 italic text-[10px]">Silencio (fuera del rango de música)</span>
             {/if}
           </div>
 
-          <div class="flex items-center justify-between text-[11px] text-neutral-400 pt-0.5">
+          <div class="flex items-center justify-between text-[11px] text-neutral-400">
             <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" bind:checked={bgSettings.fadeIn} class="accent-amber-500" />
-              <span>Fade In (3s)</span>
+              <input 
+                type="checkbox" 
+                bind:checked={bgSettings.loop} 
+                on:change={handleRangeChange}
+                class="accent-amber-500" 
+              />
+              <span>Bucle Playlist</span>
             </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" bind:checked={bgSettings.fadeOut} class="accent-amber-500" />
-              <span>Fade Out (3s)</span>
-            </label>
+
+            <!-- BOTÓN MEZCLAR LIMPIO -->
+            <button
+              type="button"
+              on:click={shufflePlaylistOnce}
+              class="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 transition text-[11px] font-bold"
+            >
+              <Shuffle size={13} class="text-amber-400" />
+              <span>Mezclar Lista</span>
+            </button>
           </div>
 
           <div class="flex items-center gap-2">
@@ -1477,46 +1597,41 @@
             <input
               type="range" min="0" max="1" step="0.05"
               bind:value={bgSettings.volume}
+              on:input={() => {
+                if (bgAudioElement) bgAudioElement.volume = computeFadeVolume(currentTime);
+              }}
               class="w-full accent-amber-500 h-1 bg-neutral-800 rounded cursor-pointer"
             />
             <span class="text-[10px] font-mono text-amber-400 w-8">{Math.round(bgSettings.volume * 100)}%</span>
           </div>
 
-          <!-- LISTA ORDENABLE Y REPRODUCIBLE -->
+          <!-- LISTA DE CANCIONES CON MUESTRA RÁPIDA (6s) -->
           <div class="flex flex-col gap-1.5 overflow-y-auto pr-1 bg-black/40 p-2 rounded-xl border border-white/5 transition-all duration-300 {isPlaylistExpanded ? 'max-h-72' : 'max-h-36'}">
             {#each bgPlaylist as song, idx (song.id)}
-              <div class="flex items-center justify-between p-1.5 bg-neutral-900/80 rounded-lg text-xs font-mono border border-white/5 {manualPlayingId === song.id ? 'border-amber-500/70 bg-amber-950/40 shadow-sm' : ''}">
-                
+              <div class="flex items-center justify-between p-1.5 bg-neutral-900/80 rounded-lg text-xs font-mono border border-white/5 {currentTrackInfo?.song?.id === song.id ? 'border-amber-500/70 bg-amber-950/30' : ''}">
                 <div class="flex items-center gap-2 truncate flex-1 min-w-0 pr-1">
-                  <!-- Botón Play/Pausa de cada canción -->
+                  <!-- Muestra rápida de 6 segundos -->
                   <button
                     type="button"
-                    on:click|stopPropagation={() => togglePlaySong(song)}
+                    on:click|stopPropagation={() => previewSongSample(song)}
                     class="p-1 rounded text-neutral-400 hover:text-amber-400 transition"
+                    title="Escuchar muestra rápida de 6 segundos desde la mitad de la canción"
                   >
-                    {#if manualPlayingId === song.id && bgAudioElement && !bgAudioElement.paused}
+                    {#if isSamplingTrack && samplingSongId === song.id}
                       <Pause size={13} class="text-amber-400 animate-pulse" />
                     {:else}
                       <Play size={13} />
                     {/if}
                   </button>
-
                   <span class="text-amber-400 font-bold shrink-0">{idx + 1}.</span>
-                  <span class="truncate text-white text-[11px] {manualPlayingId === song.id ? 'font-bold text-amber-300' : ''}">{song.name}</span>
+                  <span class="truncate text-white text-[11px]">{song.name}</span>
                 </div>
 
                 <div class="flex items-center gap-1 shrink-0">
-                  <button on:click={() => moveSong(idx, -1)} disabled={idx === 0} class="p-1 text-neutral-400 hover:text-white disabled:opacity-20">
-                    <ArrowUp size={12} />
-                  </button>
-                  <button on:click={() => moveSong(idx, 1)} disabled={idx === bgPlaylist.length - 1} class="p-1 text-neutral-400 hover:text-white disabled:opacity-20">
-                    <ArrowDown size={12} />
-                  </button>
-                  <button on:click={() => removeSong(song.id)} class="p-1 text-neutral-500 hover:text-rose-400">
-                    <Trash2 size={12} />
-                  </button>
+                  <button on:click={() => moveSong(idx, -1)} disabled={idx === 0} class="p-1 text-neutral-400 hover:text-white disabled:opacity-20"><ArrowUp size={12} /></button>
+                  <button on:click={() => moveSong(idx, 1)} disabled={idx === bgPlaylist.length - 1} class="p-1 text-neutral-400 hover:text-white disabled:opacity-20"><ArrowDown size={12} /></button>
+                  <button on:click={() => removeSong(song.id)} class="p-1 text-neutral-500 hover:text-rose-400"><Trash2 size={12} /></button>
                 </div>
-
               </div>
             {/each}
           </div>
@@ -1526,20 +1641,15 @@
               on:click={() => isPlaylistExpanded = !isPlaylistExpanded}
               class="w-full py-1 text-[10px] font-bold text-neutral-400 hover:text-amber-400 flex items-center justify-center gap-1 bg-neutral-900/50 rounded-lg transition"
             >
-              {#if isPlaylistExpanded}
-                <ChevronUp size={13} /> Contraer lista
-              {:else}
-                <ChevronDown size={13} /> Expandir lista ({bgPlaylist.length} canciones)
-              {/if}
+              {#if isPlaylistExpanded}<ChevronUp size={13} /> Contraer lista{:else}<ChevronDown size={13} /> Expandir lista ({bgPlaylist.length}){/if}
             </button>
           {/if}
-
         {:else}
           <p class="text-[11px] text-neutral-500 italic text-center py-1">Sin música de fondo añadida.</p>
         {/if}
       </div>
 
-      <!-- 3. SONIDO EN REACCIONES -->
+      <!-- 3. REACCIONES CON AUDIO -->
       <div class="flex items-center justify-between bg-black/30 p-2 rounded-xl text-xs">
         <span class="text-neutral-400">Sonido en reacciones:</span>
         <button
@@ -1550,7 +1660,7 @@
         </button>
       </div>
 
-      <!-- 4. MARCAS DE LA LÍNEA DE TIEMPO (EXPANDIBLE) -->
+      <!-- 4. MARCAS REGISTRADAS (PROTEGIDAS CONTRA RECORTE) -->
       <div class="flex items-center justify-between border-b border-white/5 pb-1">
         <span class="text-xs font-mono font-bold text-neutral-400">Marcas ({keyframes.length})</span>
         {#if keyframes.length > 0}
@@ -1562,11 +1672,11 @@
         {#if keyframes.length === 0}
           <div class="flex flex-col items-center justify-center p-6 text-center text-neutral-500 text-xs">
             <span>No hay marcas aún.</span>
-            <span>Adelantá el video y tocá botones para marcar puntos.</span>
+            <span>Adelanta el video y pulsa puntos para registrar jugadas.</span>
           </div>
         {/if}
 
-        {#each keyframes as kf (kf.id)}
+        {#each keyframes.filter(k => duration > 0 ? k.time <= duration : true) as kf (kf.id)}
           <div class="flex items-center justify-between p-2 rounded-xl bg-neutral-900/70 border border-white/5 hover:border-white/10 transition text-xs font-mono">
             <button on:click={() => seek(kf.time)} class="text-amber-400 font-bold hover:underline">
               [{formatTime(kf.time)}]
@@ -1594,10 +1704,7 @@
 
             <div class="flex items-center gap-1.5">
               {#if kf.actionType === 'effect'}
-                <button
-                  on:click={() => studioStore.toggleKeyframeSound(kf.id)}
-                  class="p-1 text-neutral-400 hover:text-white"
-                >
+                <button on:click={() => studioStore.toggleKeyframeSound(kf.id)} class="p-1 text-neutral-400 hover:text-white">
                   {#if kf.soundEnabled}<Volume2 size={13} class="text-amber-400" />{:else}<VolumeX size={13} />{/if}
                 </button>
               {/if}
@@ -1614,11 +1721,7 @@
           on:click={() => isKeyframesExpanded = !isKeyframesExpanded}
           class="w-full py-1 text-[10px] font-bold text-neutral-400 hover:text-amber-400 flex items-center justify-center gap-1 bg-neutral-900/50 rounded-lg transition"
         >
-          {#if isKeyframesExpanded}
-            <ChevronUp size={13} /> Contraer marcas
-          {:else}
-            <ChevronDown size={13} /> Expandir marcas ({keyframes.length} registradas)
-          {/if}
+          {#if isKeyframesExpanded}<ChevronUp size={13} /> Contraer marcas{:else}<ChevronDown size={13} /> Expandir marcas ({keyframes.length}){/if}
         </button>
       {/if}
 
@@ -1626,21 +1729,89 @@
 
   </main>
 
+  <!-- MODAL DE INFORMACIÓN DE MÚSICA (ℹ️) -->
+  {#if showMusicInfoModal}
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#12151e] border border-amber-500/40 rounded-2xl w-full max-w-md p-6 text-white shadow-2xl flex flex-col gap-4">
+        <div class="flex items-center justify-between border-b border-white/10 pb-3">
+          <div class="flex items-center gap-2">
+            <Music size={18} class="text-amber-400" />
+            <h3 class="text-sm font-bold uppercase font-mono tracking-wide">Guía de Música de Fondo</h3>
+          </div>
+          <button on:click={() => showMusicInfoModal = false} class="text-neutral-400 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div class="flex flex-col gap-3 text-xs text-neutral-300 leading-relaxed font-sans">
+          <div class="bg-black/40 p-3 rounded-xl border border-white/5">
+            <h4 class="font-bold text-amber-400 mb-1 flex items-center gap-1.5"><Clock size={13} /> Rango Activo (Inicio y Fin)</h4>
+            <p>Define el momento exacto donde la música empieza y termina. La música entra suavemente con un Fade In de 3 segundos y sale con un Fade Out de 3 segundos.</p>
+          </div>
+
+          <div class="bg-black/40 p-3 rounded-xl border border-white/5">
+            <h4 class="font-bold text-amber-400 mb-1 flex items-center gap-1.5"><RefreshCw size={13} /> Bucle Playlist</h4>
+            <p>Si está <strong>activado</strong>, la lista de canciones se repite para cubrir todo el rango. Si está <strong>desactivado</strong>, la música se cortará al terminar las canciones añadidas.</p>
+          </div>
+
+          <div class="bg-black/40 p-3 rounded-xl border border-white/5">
+            <h4 class="font-bold text-amber-400 mb-1 flex items-center gap-1.5"><Play size={13} /> Muestra Rápida (6s)</h4>
+            <p>Al pulsar play sobre una canción en la lista, el video se pausa momentáneamente y suena una muestra de 6 segundos desde la mitad de la canción para reconocerla rápidamente.</p>
+          </div>
+        </div>
+
+        <button
+          on:click={() => showMusicInfoModal = false}
+          class="w-full py-2 bg-neutral-800 hover:bg-neutral-700 font-bold rounded-xl text-xs transition"
+        >
+          Entendido
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- MODAL DE RE-VINCULACIÓN INTELIGENTE DE VIDEO -->
+  {#if showMissingVideoModal}
+    <div class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+      <div class="bg-[#10131c] border border-amber-500/50 rounded-2xl w-full max-w-md p-6 text-white shadow-2xl flex flex-col gap-4 text-center items-center">
+        <AlertCircle size={36} class="text-amber-400" />
+        <h3 class="text-sm font-bold tracking-wide uppercase font-mono">Video no localizado</h3>
+        <p class="text-xs text-neutral-300 leading-relaxed">
+          Parece que la ubicación del video o su nombre han cambiado, por favor seleccione el video que va a editar.
+        </p>
+
+        <div class="flex items-center gap-3 w-full justify-center pt-2">
+          <button
+            on:click={() => relinkFileInput.click()}
+            class="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl shadow-lg transition active:scale-95 flex items-center gap-2"
+          >
+            <FolderOpen size={16} /> Seleccionar Video en mi equipo
+          </button>
+          <button
+            on:click={() => showMissingVideoModal = false}
+            class="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold rounded-xl transition"
+          >
+            Omitir por ahora
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- MODAL DE PROGRESO DE RENDERIZADO -->
   {#if renderProgress.active || isUploadingForRender}
     <div class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
       <div class="bg-[#10131c] border border-white/20 rounded-2xl w-full max-w-md p-6 text-white shadow-2xl flex flex-col gap-4">
-        
         <div class="flex items-center justify-between border-b border-white/10 pb-3">
           <div class="flex items-center gap-3">
             <Film size={22} class="text-amber-400 animate-pulse" />
             <h3 class="text-sm font-bold tracking-wide uppercase font-mono">
-              {isUploadingForRender ? 'Preparando video y pistas de audio...' : 'Procesando con FFmpeg (Alta Definición)'}
+              {isUploadingForRender ? 'Preparando pistas y video...' : 'Exportando con FFmpeg (Alta Definición)'}
             </h3>
           </div>
           <button
             on:click={handleCancelRender}
-            class="px-3.5 py-1.5 bg-neutral-800 hover:bg-rose-600/90 border border-neutral-700 hover:border-rose-500 text-xs font-bold rounded-lg transition flex items-center gap-1.5 text-neutral-300 hover:text-white"
+            class="px-3 py-1.5 bg-neutral-800 hover:bg-rose-600/90 border border-neutral-700 text-xs font-bold rounded-lg transition flex items-center gap-1 text-neutral-300 hover:text-white"
           >
             <X size={14} /> Cancelar
           </button>
@@ -1657,11 +1828,6 @@
             </div>
           </div>
         {/if}
-
-        <p class="text-[11px] text-neutral-400">
-          Al finalizar podrás descargarlo con el botón de descarga.
-        </p>
-
       </div>
     </div>
   {/if}
@@ -1670,17 +1836,12 @@
   {#if renderProgress.downloadUrl}
     <div class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
       <div class="relative bg-[#10131c] border border-amber-500/50 rounded-2xl w-full max-w-md p-6 text-white shadow-2xl flex flex-col gap-4 text-center items-center">
-        
-        <button
-          on:click={() => studioStore.setRenderProgress({ downloadUrl: null })}
-          class="absolute top-4 right-4 text-neutral-400 hover:text-white transition"
-        >
+        <button on:click={() => studioStore.setRenderProgress({ downloadUrl: null })} class="absolute top-4 right-4 text-neutral-400 hover:text-white">
           <X size={20} />
         </button>
-
         <Sparkles size={32} class="text-amber-400" />
         <h3 class="text-base font-bold uppercase font-mono">¡Video Terminado con Éxito!</h3>
-        <p class="text-xs text-neutral-300">El archivo quedó listo en alta definición con el marcador Retina, la cinta continua, confeti y audio combinados.</p>
+        <p class="text-xs text-neutral-300">El archivo quedó listo con el marcador Retina, la cinta continua sin cortes y el audio sincronizado.</p>
         
         <div class="flex items-center gap-3 w-full justify-center pt-2">
           <a
@@ -1688,9 +1849,8 @@
             download="partida_final_con_marcador.mp4"
             class="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl shadow-lg transition active:scale-95"
           >
-            Descargar Archivo MP4
+            Descargar Video MP4
           </a>
-
           <button
             on:click={() => studioStore.setRenderProgress({ downloadUrl: null })}
             class="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold rounded-xl border border-white/10 transition"
@@ -1698,7 +1858,6 @@
             Seguir Editando
           </button>
         </div>
-
       </div>
     </div>
   {/if}
