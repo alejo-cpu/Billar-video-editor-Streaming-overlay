@@ -41,6 +41,7 @@
   let previewScale = 1;
   let resizeObserver = null;
 
+  // Auto-ocultado a los 2.5s en Play y en Pausa
   let showControls = true;
   let hideControlsTimer = null;
 
@@ -69,9 +70,8 @@
   let samplingTimer = null;
   let wasVideoPlayingBeforeSample = false;
 
-  // RASTREADOR DE CANCIÓN ACTUAL (Evita que el audio se recargue en bucle causando lag)
+  // RASTREADOR DE CANCIÓN ACTUAL (Evita recargas constantes y lag)
   let activeTrackSongId = null;
-
   let playedKeyframeIds = new Set();
 
   const DEFAULT_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%231a1d26"/><circle cx="50" cy="38" r="19" fill="%234b5563"/><path d="M18,92 C18,68 32,62 50,62 C68,62 82,68 82,92 Z" fill="%234b5563"/></svg>`;
@@ -229,7 +229,6 @@
     if (projectData.bgSettings) bgSettings = projectData.bgSettings;
     if (projectData.videoAudioSettings) videoAudioSettings = projectData.videoAudioSettings;
 
-    // Restaurar canciones directamente desde el servidor local
     if (projectData.bgPlaylist && Array.isArray(projectData.bgPlaylist)) {
       bgPlaylist = projectData.bgPlaylist.map(p => ({
         id: p.id,
@@ -243,21 +242,21 @@
     studioStore.loadProjectData(projectData);
 
     const projName = projectData.projectName || 'partida';
-    const vName = projectData.videoName || '';
     
-    // Comprobar si el video físico está dentro de la carpeta proyectos_billar/[Nombre]/video/
+    // DETECCIÓN INTELIGENTE DE CUALQUIER ARCHIVO DE VIDEO EN LA CARPETA
     try {
-      const checkRes = await fetch(`/api/project/check-video?project=${encodeURIComponent(projName)}&video=${encodeURIComponent(vName)}`);
+      const checkRes = await fetch(`/api/project/check-video?project=${encodeURIComponent(projName)}`);
       const checkData = await checkRes.json();
       suggestedVideoFolder = checkData.suggestedPath || `public/proyectos_billar/${projName}/video`;
 
       if (checkData.exists && checkData.videoUrl) {
-        studioStore.setVideoUrlDirect(checkData.videoUrl, vName);
+        studioStore.setVideoUrlDirect(checkData.videoUrl, checkData.videoName);
+        showMissingVideoModal = false;
         return;
       }
     } catch (e) {}
 
-    // SI NO HAY VIDEO CARGADO EN EL REPRODUCTOR, ABRIR EL MODAL SÍ O SÍ
+    // Si no está en disco ni en memoria, abrir el modal grande y legible
     if (!$studioStore.videoFile && !$studioStore.videoUrl) {
       showMissingVideoModal = true;
     }
@@ -273,7 +272,7 @@
     e.target.value = '';
   }
 
-  /* ==================== AUDIO SIN LAG Y ONDA DINÁMICA ==================== */
+  /* ==================== AUDIO SIN LAG Y ONDA BEZIER ORGÁNICA ==================== */
   $: totalPlaylistSeconds = bgPlaylist.reduce((acc, s) => acc + (s.duration || 120), 0);
 
   $: if (duration > 0 && bgSettings.rangeEnd === 0) {
@@ -336,7 +335,7 @@
 
   $: currentTrackInfo = getTrackAtVideoTime(currentTime);
 
-  // SINCRONIZACIÓN DE AUDIO SIN LAG (Compara por ID, no por string de URL)
+  // SINCRONIZACIÓN DE AUDIO SIN LAG (POR ID DE CANCIÓN)
   function syncAudioWithVideo(videoSec, playing) {
     if (!bgAudioElement || !bgPlaylist.length || isSamplingTrack) return;
 
@@ -349,14 +348,12 @@
       return;
     }
 
-    // Solo recarga el src si la pista realmente cambió de canción
     if (activeTrackSongId !== track.song.id) {
       activeTrackSongId = track.song.id;
       bgAudioElement.src = track.song.url;
       bgAudioElement.currentTime = track.offset;
       if (playing) bgAudioElement.play().catch(() => {});
     } else {
-      // Solo ajusta el tiempo si se desvía más de 1.2 segundos (evita micro-cortes)
       if (Math.abs(bgAudioElement.currentTime - track.offset) > 1.2) {
         bgAudioElement.currentTime = track.offset;
       }
@@ -370,20 +367,33 @@
 
   $: syncAudioWithVideo(currentTime, isPlaying);
 
-  // GENERADOR DE BARRAS DE ONDA DE AUDIO REACTIVAS A LA PLAYLIST (Tus dibujos 1 y 2)
-  $: waveformBars = (() => {
-    if (!bgPlaylist || bgPlaylist.length === 0) return [];
-    const bars = [];
-    // Cada canción de la playlist aporta su propio relieve sonoro único
-    bgPlaylist.forEach((song, sIdx) => {
-      const seed = (song.name.length * 13 + sIdx * 29) % 100;
-      for (let b = 0; b < 10; b++) {
-        // Alturas entre 4px y 24px según la canción
-        const h = 4 + (((seed + b * 17) % 20) + Math.sin(b * 0.8 + sIdx) * 6);
-        bars.push(Math.max(4, Math.min(24, Math.round(h))));
-      }
-    });
-    return bars;
+  // SILUETA DE ONDA CONTINUA Y ORGÁNICA BEZIER EN SVG (Tus dibujos 1 y 2)
+  $: wavePathD = (() => {
+    if (!bgPlaylist || bgPlaylist.length === 0) return '';
+    const points = [];
+    const numPoints = 28;
+    
+    for (let i = 0; i <= numPoints; i++) {
+      const songIdx = Math.floor((i / numPoints) * bgPlaylist.length) % bgPlaylist.length;
+      const song = bgPlaylist[songIdx];
+      const seed = (song.name.length * 19 + songIdx * 37 + i * 13) % 100;
+      // Curva con crestas y valles suaves (sin bordes rectos ni caja)
+      const h = (i === 0 || i === numPoints) 
+        ? 0 
+        : 4 + (seed % 14) + Math.sin(i * 0.75) * 5;
+      points.push({ x: (i / numPoints) * 100, y: 26 - h });
+    }
+
+    let d = `M 0,26 L 0,${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      const cx = (p0.x + p1.x) / 2;
+      d += ` Q ${p0.x},${p0.y} ${cx},${(p0.y + p1.y) / 2}`;
+    }
+    const lastP = points[points.length - 1];
+    d += ` L ${lastP.x},${lastP.y} L 100,26 Z`;
+    return d;
   })();
 
   function previewSongSample(song) {
@@ -417,7 +427,7 @@
     if (samplingTimer) clearTimeout(samplingTimer);
     isSamplingTrack = false;
     samplingSongId = null;
-    activeTrackSongId = null; // Fuerza resincronización limpia
+    activeTrackSongId = null;
     if (bgAudioElement) bgAudioElement.pause();
 
     if (wasVideoPlayingBeforeSample && videoElement) {
@@ -482,7 +492,7 @@
     newArr.splice(index, 1);
     newArr.splice(target, 0, item);
     bgPlaylist = newArr;
-    activeTrackSongId = null; // Actualiza la onda visual y el orden sonoro
+    activeTrackSongId = null;
   }
 
   function removeSong(id) {
@@ -510,7 +520,7 @@
       [copy[i], copy[j]] = [copy[j], copy[i]];
     }
     bgPlaylist = copy;
-    activeTrackSongId = null; // Reorganiza la onda de sonido visual de inmediato
+    activeTrackSongId = null;
     showFeedback('Lista mezclada');
   }
 
@@ -1055,39 +1065,40 @@
             class="absolute inset-0 pointer-events-none z-40 w-full h-full"
           ></canvas>
 
-          <!-- CONTROLES DEL REPRODUCTOR CON ONDA DE AUDIO INTEGRADA (28px de altura, corte trapezoidal) -->
+          <!-- CONTROLES CON ONDA BEZIER ORGÁNICA (SIN CAJAS NI BORDES RECTOS) -->
           <div 
-            class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent p-3 flex flex-col gap-1 transition-opacity duration-300 z-50
+            class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent p-3 flex flex-col gap-0 transition-opacity duration-300 z-50
             {showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
           >
             
-            <!-- PISTA SUPERIOR: ONDA DE AUDIO DINÁMICA (TUS DIBUJOS 1 Y 2) -->
-            <div class="w-full h-7 relative flex items-end pointer-events-none">
+            <!-- SILUETA DE ONDA SONORA ORGÁNICA BEZIER -->
+            <div class="w-full h-6 relative flex items-end pointer-events-none overflow-visible">
               {#if bgPlaylist.length > 0 && duration > 0}
                 <div
-                  class="absolute bottom-0 h-7 flex items-end overflow-visible"
+                  class="absolute bottom-0 h-6 flex items-end"
                   style="
                     left: {(Math.max(0, bgSettings.rangeStart || 0) / duration) * 100}%;
                     width: {(Math.max(0, (bgSettings.rangeEnd || duration) - (bgSettings.rangeStart || 0)) / duration) * 100}%;
-                    clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 100%, 0 100%);
-                    background: linear-gradient(180deg, rgba(245, 158, 11, 0.45) 0%, rgba(245, 158, 11, 0.15) 100%);
-                    border-top: 1.5px solid rgba(251, 191, 36, 0.85);
                   "
                 >
-                  <!-- Barras de ecualizador rítmicas vivas que cambian con las canciones -->
-                  <div class="w-full h-full flex items-end justify-between px-1 gap-[2px]">
-                    {#each waveformBars as bHeight, idx}
-                      <div 
-                        class="flex-1 bg-amber-400/70 rounded-t-sm"
-                        style="height: {bHeight}px;"
-                      ></div>
-                    {/each}
-                  </div>
+                  <svg class="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 26">
+                    <defs>
+                      <linearGradient id="audioWaveGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.55" />
+                        <stop offset="60%" stop-color="#d97706" stop-opacity="0.25" />
+                        <stop offset="100%" stop-color="#b45309" stop-opacity="0.05" />
+                      </linearGradient>
+                      <filter id="waveGlow" x="-5%" y="-20%" width="110%" height="140%">
+                        <feDropShadow dx="0" dy="-1" stdDeviation="1.2" flood-color="#fbbf24" flood-opacity="0.5"/>
+                      </filter>
+                    </defs>
+                    <path fill="url(#audioWaveGrad)" stroke="#fbbf24" stroke-width="1.2" stroke-linecap="round" filter="url(#waveGlow)" d={wavePathD} />
+                  </svg>
                 </div>
               {/if}
             </div>
 
-            <!-- BARRA DE TIEMPO DEL VIDEO (FLUSH JUSTO DEBAJO DE LA ONDA) -->
+            <!-- BARRA DE TIEMPO DEL VIDEO -->
             <div 
               class="relative w-full h-3 flex items-center cursor-pointer select-none"
               on:click={(e) => {
@@ -1109,7 +1120,7 @@
               {/each}
             </div>
 
-            <div class="flex items-center justify-between text-xs pt-0.5">
+            <div class="flex items-center justify-between text-xs pt-1">
               <div class="flex items-center gap-3">
                 <button on:click={togglePlay} class="text-white hover:text-amber-400 transition">
                   {#if isPlaying}<Pause size={17} />{:else}<Play size={17} />{/if}
@@ -1847,44 +1858,43 @@
     </div>
   {/if}
 
-  <!-- MODAL DE RE-VINCULACIÓN INTELIGENTE DE VIDEO CON SUGERENCIA OPCIONAL -->
+  <!-- MODAL DE RE-VINCULACIÓN: GRANDE, CLARO Y RESUMIDO -->
   {#if showMissingVideoModal}
     <div class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
-      <div class="bg-[#10131c] border border-amber-500/50 rounded-2xl w-full max-w-lg p-6 text-white shadow-2xl flex flex-col gap-4 text-center items-center">
-        <AlertCircle size={36} class="text-amber-400" />
-        <h3 class="text-sm font-bold tracking-wide uppercase font-mono">Video no localizado</h3>
-        <p class="text-xs text-neutral-300 leading-relaxed">
-          Parece que la ubicación del video o su nombre han cambiado, por favor seleccione el video que va a editar.
-        </p>
+      <div class="bg-[#10131c] border border-amber-500/50 rounded-2xl w-full max-w-xl p-7 text-white shadow-2xl flex flex-col gap-5 text-center items-center">
+        <AlertCircle size={44} class="text-amber-400" />
+        
+        <div class="flex flex-col gap-1.5">
+          <h3 class="text-base sm:text-lg font-black tracking-wide uppercase font-mono text-white">Video no localizado</h3>
+          <p class="text-xs sm:text-sm text-neutral-300">
+            No encontramos el video de esta partida. Puedes seleccionarlo ahora o moverlo a la carpeta del proyecto para que abra siempre solo.
+          </p>
+        </div>
 
-        <!-- RECOMENDACIÓN TOTALMENTE OPCIONAL PARA TUS 28 GB -->
         {#if suggestedVideoFolder}
-          <div class="bg-black/50 border border-white/10 rounded-xl p-3 text-left w-full text-xs">
-            <span class="text-amber-400 font-bold flex items-center gap-1.5 mb-1">
-              <Info size={13} /> Recomendación (Totalmente Opcional):
+          <div class="bg-black/50 border border-white/10 rounded-xl p-3.5 text-left w-full text-xs">
+            <span class="text-amber-400 font-bold flex items-center gap-1.5 mb-1 text-xs">
+              <Info size={14} /> Recomendación (Opcional):
             </span>
-            <p class="text-neutral-400 text-[11px] leading-relaxed">
-              Si deseas que este video se abra de forma automática en el futuro sin tener que seleccionarlo cada vez, puedes mover o copiar el archivo de video dentro de esta carpeta de tu disco:
+            <p class="text-neutral-400 text-xs leading-relaxed">
+              Si quieres que el video abra automáticamente en el futuro sin tener que seleccionarlo, colócalo en:
             </p>
-            <div class="bg-neutral-900 border border-neutral-700 p-2 rounded mt-1.5 font-mono text-[10px] text-amber-300 break-all select-all">
+            <div class="bg-neutral-900 border border-neutral-700 p-2 rounded mt-1.5 font-mono text-xs text-amber-300 break-all select-all font-bold">
               {suggestedVideoFolder}
             </div>
-            <p class="text-neutral-500 text-[10px] mt-1 italic">
-              (Esto es una sugerencia para tu comodidad si tienes espacio; si no, simplemente selecciónalo con el botón de abajo sin copiar nada).
-            </p>
           </div>
         {/if}
 
         <div class="flex items-center gap-3 w-full justify-center pt-2">
           <button
             on:click={() => relinkFileInput.click()}
-            class="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl shadow-lg transition active:scale-95 flex items-center gap-2"
+            class="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black text-sm font-black rounded-xl shadow-lg transition active:scale-95 flex items-center gap-2"
           >
-            <FolderOpen size={16} /> Seleccionar Video en mi equipo
+            <FolderOpen size={18} /> Seleccionar Video en mi equipo
           </button>
           <button
             on:click={() => showMissingVideoModal = false}
-            class="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold rounded-xl transition"
+            class="px-5 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-sm font-bold rounded-xl transition"
           >
             Omitir por ahora
           </button>

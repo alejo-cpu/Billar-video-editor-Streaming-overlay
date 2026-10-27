@@ -18,7 +18,7 @@
   let lastFrameTime = null;
   let boxCounter = 0;
 
-  // Cálculo exacto del ancho para que no queden huecos excesivos
+  // Cálculo tipográfico ajustado para que no queden huecos excesivos
   function estimateItemWidth(item) {
     const textW = (item.text || '').length * 8.5;
     const logoW = item.logoUrl ? 90 : 0;

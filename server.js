@@ -17,7 +17,6 @@ if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(PROJECTS_BASE_DIR)) fs.mkdirSync(PROJECTS_BASE_DIR, { recursive: true });
 
-// Limpieza preventiva de temporales huérfanos antiguos
 try {
   const now = Date.now();
   fs.readdirSync(UPLOADS_DIR).forEach(file => {
@@ -155,7 +154,6 @@ function runFFmpegRender(payload, wsClient) {
   filterComplex.push(`[0:v]scale=1920:1080,setsar=1[v_base]`);
   let currentVideoOutput = 'v_base';
 
-  /* 1. HUD */
   if (hudSnapshots && hudSnapshots.length > 0) {
     hudSnapshots.forEach((snap, idx) => {
       const base64Data = snap.dataUrl.replace(/^data:image\/png;base64,/, '');
@@ -174,7 +172,6 @@ function runFFmpegRender(payload, wsClient) {
     });
   }
 
-  /* 2. CINTA CON ANCHO 'w' NATIVO */
   if (tickerSnapshots && tickerSnapshots.length > 0) {
     tickerSnapshots.forEach((tick, idx) => {
       if (!tick.dataUrl || !tick.visible) return;
@@ -203,7 +200,6 @@ function runFFmpegRender(payload, wsClient) {
     });
   }
 
-  /* 3. REACCIONES */
   const effectEvents = (events || []).filter(e => e.actionType === 'effect');
   effectEvents.forEach((ev, idx) => {
     const effectName = ev.payload.effect;
@@ -245,12 +241,11 @@ function runFFmpegRender(payload, wsClient) {
     if (isP1) {
       filterComplex.push(`[${currentVideoOutput}][${prepOut}]overlay=x='if(lt(t-${t0}\\,0.35)\\, -w+(32+w)*(t-${t0})/0.35\\, if(gt(t-${t0}\\,1.50)\\, 32-(32+w)*(t-${t0}-1.50)/0.35\\, 32))':y=H-h-90:eof_action=pass:enable='between(t,${t0.toFixed(2)},${(t0 + 1.85).toFixed(2)})'[${nextOut}]`);
     } else {
-      filterComplex.push(`[${currentVideoOutput}][${prepOut}]overlay=x='if(lt(t-${t0}\\,0.35)\\, W-(32+w)*(t-${t0})/0.35\\, if(gt(t-${t0}\\,1.50)\\, (W-w-32)+(32+w)*(t-${t0}-1.50)/0.35\\, W-w-32))':y=H-h-90:eof_action=pass:enable='between(t,${t0.toFixed(2)},${(t0 + 1.85).toFixed(2)})'[${nextOut}]`);
+      filterComplex.push(`[${currentVideoOutput}][${prepOut}]overlay=x='if(lt(t-${t0}\\,0.35)\\, W-(32+w)*(t-${t0})/0.35\\, if(gt(t-${t0}\\,1.50)\\, (W-w-32)+(32+w)*(t-${t0}-1.50)/0.35\\, W-w-32))':y=H-h-90:enable='between(t,${t0.toFixed(2)},${(t0 + 1.85).toFixed(2)})'[${nextOut}]`);
     }
     currentVideoOutput = nextOut;
   });
 
-  /* 4. AUDIO CON RANGO Y FADES */
   let audioInputs = [];
   let hasVideoAudio = false;
   try {
@@ -365,7 +360,6 @@ function runFFmpegRender(payload, wsClient) {
     filterComplex.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=first:dropout_transition=2[aout]`);
   }
 
-  // SCRIPT DE FILTROS PARA WINDOWS Y LINUX (SIN LÍMITE DE COMANDO)
   const scriptFileName = `filter_script_${Date.now()}.txt`;
   const scriptPath = path.join(UPLOADS_DIR, scriptFileName);
   fs.writeFileSync(scriptPath, filterComplex.join(';\n'), 'utf8');
@@ -386,8 +380,6 @@ function runFFmpegRender(payload, wsClient) {
     '-movflags', '+faststart',
     outputPath
   );
-
-  console.log(`🚀 FFmpeg ejecutando con script (${filterComplex.length} operaciones)`);
 
   let stderrLog = '';
   const proc = spawn(FFMPEG_BIN, ffmpegArgs);
@@ -466,6 +458,13 @@ function getLocalIp() {
 }
 
 async function start() {
+  // Detectar puerto solicitado por parámetro CLI (--port 5180) o variable de entorno (PORT=5180)
+  const portArgIdx = process.argv.indexOf('--port') !== -1 ? process.argv.indexOf('--port') : process.argv.indexOf('-p');
+  const cliPort = portArgIdx !== -1 ? parseInt(process.argv[portArgIdx + 1], 10) : null;
+  const initialRequestedPort = cliPort || parseInt(process.env.PORT || process.env.VITE_PORT || 5173, 10);
+
+  let activeVitePort = initialRequestedPort;
+
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -479,7 +478,7 @@ async function start() {
 
     if (req.method === 'GET' && req.url === '/api/network-info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ip: getLocalIp(), port: 5173 }));
+      res.end(JSON.stringify({ ip: getLocalIp(), port: activeVitePort }));
       return;
     }
 
@@ -504,7 +503,6 @@ async function start() {
       return;
     }
 
-    // Subida general de medios
     if (req.method === 'POST' && req.url.startsWith('/api/upload-media')) {
       const fileNameHeader = req.headers['x-file-name'] ? decodeURIComponent(req.headers['x-file-name']) : 'video.mp4';
       const cleanName = fileNameHeader.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -524,7 +522,6 @@ async function start() {
       return;
     }
 
-    // SUBIDA PERMANENTE DE CANCIONES A LA CARPETA DEL PROYECTO (proyectos_billar/[proyecto]/audio/)
     if (req.method === 'POST' && req.url.startsWith('/api/project/upload-audio')) {
       const urlObj = new URL(req.url, 'http://localhost:3001');
       const projName = (urlObj.searchParams.get('project') || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -548,7 +545,6 @@ async function start() {
       return;
     }
 
-    // GESTIÓN DE PROYECTOS: GUARDADO DIRECTO EN DISCO (Linux y Windows)
     if (req.method === 'POST' && req.url === '/api/project/save') {
       let body = '';
       req.on('data', chunk => { body += chunk; });
@@ -557,7 +553,6 @@ async function start() {
           const payload = JSON.parse(body);
           const rawName = (payload.projectName || payload.videoName || 'partida').replace(/[^a-zA-Z0-9_-]/g, '_');
           
-          // Crear estructura de carpetas: proyectos_billar/[Nombre_Partida]/
           const projectDir = path.join(PROJECTS_BASE_DIR, rawName);
           const videoSubDir = path.join(projectDir, 'video');
           const audioSubDir = path.join(projectDir, 'audio');
@@ -586,25 +581,55 @@ async function start() {
       return;
     }
 
-    // COMPROBAR SI EL VIDEO ESTÁ PRESENTE EN LA CARPETA DEL PROYECTO
     if (req.method === 'GET' && req.url.startsWith('/api/project/check-video')) {
       const urlObj = new URL(req.url, 'http://localhost:3001');
       const projName = (urlObj.searchParams.get('project') || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const videoName = (urlObj.searchParams.get('video') || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const videoSubDir = path.join(PROJECTS_BASE_DIR, projName, 'video');
 
-      const videoPath = path.join(PROJECTS_BASE_DIR, projName, 'video', videoName);
-      const exists = fs.existsSync(videoPath);
+      let foundVideoName = null;
+      if (fs.existsSync(videoSubDir)) {
+        const files = fs.readdirSync(videoSubDir);
+        foundVideoName = files.find(f => /\.(mp4|webm|mkv|mov|avi)$/i.test(f));
+      }
+
+      const exists = !!foundVideoName;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         exists, 
-        videoUrl: exists ? `/proyectos_billar/${projName}/video/${videoName}` : null,
-        suggestedPath: path.join(PROJECTS_BASE_DIR, projName, 'video')
+        videoName: foundVideoName,
+        videoUrl: exists ? `/proyectos_billar/${projName}/video/${foundVideoName}` : null,
+        suggestedPath: videoSubDir
       }));
       return;
     }
 
     res.writeHead(404);
     res.end();
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log('\n==========================================================');
+      console.log('   ⚠️  HDP BILLAR YA SE ENCUENTRA EN EJECUCIÓN');
+      console.log('==========================================================');
+      console.log('Ya tienes una ventana o proceso de HDP BILLAR abierto en el puerto 3001.');
+      console.log('Abriendo el panel de control en tu navegador...');
+      console.log('==========================================================\n');
+      const pcUrl = `http://localhost:${activeVitePort}/?view=control`;
+      try {
+        if (process.platform === 'win32') {
+          spawn('cmd.exe', ['/c', 'start', '', pcUrl]);
+        } else if (process.platform === 'darwin') {
+          spawn('open', [pcUrl]);
+        } else {
+          spawn('xdg-open', [pcUrl]);
+        }
+      } catch (e) {}
+      process.exit(0);
+    } else {
+      console.error('Error en el servidor:', err);
+      process.exit(1);
+    }
   });
 
   const wss = new WebSocketServer({ server });
@@ -618,7 +643,6 @@ async function start() {
     });
   }
 
-  // RELOJ PRECISO CON Date.now() (CERO TIMER DRIFT)
   let lastTimerTick = Date.now();
   setInterval(() => {
     const now = Date.now();
@@ -676,15 +700,16 @@ async function start() {
   const vite = await createViteServer({
     server: { 
       host: '0.0.0.0',
-      port: 5173 
+      port: initialRequestedPort
     }
   });
   await vite.listen();
 
+  activeVitePort = vite.httpServer?.address()?.port || initialRequestedPort;
   const localIp = getLocalIp();
-  const pcUrl = 'http://localhost:5173/?view=control';
-  const mobileUrl = `http://${localIp}:5173/?view=control`;
-  const obsUrl = 'http://localhost:5173/?view=overlay';
+  const pcUrl = `http://localhost:${activeVitePort}/?view=control`;
+  const mobileUrl = `http://${localIp}:${activeVitePort}/?view=control`;
+  const obsUrl = `http://localhost:${activeVitePort}/?view=overlay`;
 
   console.log('\n==========================================================');
   console.log('   🎱 SISTEMA DE BILLAR INICIADO CORRECTAMENTE');

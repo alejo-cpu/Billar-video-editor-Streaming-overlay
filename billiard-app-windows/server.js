@@ -473,6 +473,7 @@ function getLocalIp() {
 }
 
 async function start() {
+  let activeVitePort = 5173;
   const server = createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -487,7 +488,7 @@ async function start() {
     // IP y red para conexión móvil
     if (req.method === 'GET' && req.url === '/api/network-info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ip: getLocalIp(), port: 5173 }));
+      res.end(JSON.stringify({ ip: getLocalIp(), port: activeVitePort }));
       return;
     }
 
@@ -671,10 +672,11 @@ async function start() {
   });
   await vite.listen();
 
+    activeVitePort = vite.httpServer?.address()?.port || 5173;
   const localIp = getLocalIp();
-  const pcUrl = 'http://localhost:5173/?view=control';
-  const mobileUrl = `http://${localIp}:5173/?view=control`;
-  const obsUrl = 'http://localhost:5173/?view=overlay';
+  const pcUrl = `http://localhost:${activeVitePort}/?view=control`;
+  const mobileUrl = `http://${localIp}:${activeVitePort}/?view=control`;
+  const obsUrl = `http://localhost:${activeVitePort}/?view=overlay`;
 
   console.log('\n==========================================================');
   console.log('   🎱 SISTEMA DE BILLAR INICIADO CORRECTAMENTE');
