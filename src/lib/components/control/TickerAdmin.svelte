@@ -5,15 +5,22 @@
   $: ticker = $matchStore?.ticker || { visible: true, items: [] };
 
   let stagedItems = [];
-  let isInitialized = false;
+  let isDirty = false;
+  let lastStoreJson = '';
 
-  $: if (!isInitialized && $matchStore?.ticker?.items) {
-    syncWithStore();
-    isInitialized = true;
+  $: storeItemsJson = JSON.stringify($matchStore?.ticker?.items || []);
+
+  // Sincronizacion automatica con el servidor al conectar el movil
+  $: if (storeItemsJson !== lastStoreJson) {
+    lastStoreJson = storeItemsJson;
+    if (!isDirty) {
+      stagedItems = JSON.parse(storeItemsJson);
+    }
   }
 
   function syncWithStore() {
     stagedItems = JSON.parse(JSON.stringify($matchStore?.ticker?.items || []));
+    isDirty = false;
   }
 
   let newItemText = '';
@@ -34,6 +41,7 @@
 
   function addItem() {
     if (newItemText.trim()) {
+      isDirty = true;
       stagedItems = [
         ...stagedItems,
         { 
@@ -50,15 +58,18 @@
   }
 
   function removeItem(id) {
+    isDirty = true;
     stagedItems = stagedItems.filter(i => i.id !== id);
   }
 
   function toggleActive(id) {
+    isDirty = true;
     stagedItems = stagedItems.map(i => i.id === id ? { ...i, active: !i.active } : i);
   }
 
   function applyChanges() {
     matchStore.applyTickerItemsImmediately(stagedItems);
+    isDirty = false;
   }
 </script>
 
@@ -82,7 +93,7 @@
 
       <button
         on:click={() => matchStore.toggleTickerVisible()}
-        class="px-2.5 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition {ticker.visible ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}"
+        class="px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition {ticker.visible ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}"
       >
         {#if ticker.visible}
           <Eye size={14} /> Visible
@@ -126,9 +137,8 @@
       </button>
     </div>
 
-    <!-- Seccion de Logo en 2 filas completas alineadas -->
+    <!-- Seccion de Logo -->
     <div class="flex flex-col gap-2 pt-2 border-t border-white/5">
-      <!-- Fila 1: Selector de modo -->
       <div class="flex items-center justify-between">
         <span class="text-neutral-400 flex items-center gap-1 text-[11px] font-mono"><ImageIcon size={13} /> Logo opcional:</span>
         
@@ -150,7 +160,6 @@
         </div>
       </div>
 
-      <!-- Fila 2: Input o boton a ancho completo -->
       <div class="w-full">
         {#if logoInputMode === 'file'}
           <div class="flex items-center gap-2 w-full">
@@ -180,8 +189,8 @@
               />
             </div>
             {#if newItemLogo}
-              <div class="flex items-center gap-1.5 bg-neutral-800 px-2 py-1 rounded-lg border border-amber-500/40">
-                <img src={newItemLogo} alt="preview" class="h-5 w-7 object-contain" />
+              <div class="flex items-center gap-1.5 bg-neutral-800 px-2 py-1.5 rounded-lg border border-amber-500/40">
+                <img src={newItemLogo} alt="preview" class="h-4 w-6 object-contain" />
                 <button on:click={() => newItemLogo = ''} class="text-neutral-400 hover:text-rose-400">
                   <X size={14} />
                 </button>

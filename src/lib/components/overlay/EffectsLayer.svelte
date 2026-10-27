@@ -28,7 +28,10 @@
     confetti: '/sounds/confetti.mp3',
     clap: '/sounds/clap.mp3',
     ball8: '/sounds/ball8.mp3',
-    crown: '/sounds/crown.mp3'
+    crown: '/sounds/crown.mp3',
+    'point-plus': '/sounds/+1 Point.mp3',
+    'point-minus': '/sounds/-1 Point.mp3',
+    'game-plus': '/sounds/+1 Games.mp3'
   };
 
   const AUDIO_CONFIG = {
@@ -39,7 +42,10 @@
     crown: { delay: 0, volume: 0.12 },
     fire: { delay: 0, volume: 0.30, fadeAfter: 1800 },
     confetti: { delay: 0, volume: 0.35 },
-    ball8: { delay: 0, volume: 0.35 }
+    ball8: { delay: 0, volume: 0.35 },
+    'point-plus': { delay: 0, volume: 0.50 },
+    'point-minus': { delay: 0, volume: 0.50 },
+    'game-plus': { delay: 0, volume: 0.55 }
   };
 
   function playSound(effect, isMuted = false) {
@@ -80,9 +86,8 @@
   function handleTrigger(data) {
     if (!data) return;
 
-    // Evitar que el efecto se dispare 2 veces seguidas
     const now = Date.now();
-    if (data.effect === lastTriggerKey && now - lastTriggerTime < 320) {
+    if (data.effect === lastTriggerKey && now - lastTriggerTime < 250) {
       return;
     }
     lastTriggerTime = now;
@@ -90,6 +95,11 @@
 
     const isMuted = data.soundEnabled === false;
     playSound(data.effect, isMuted);
+
+    // Sonidos sin stickers visuales
+    if (data.effect === 'point-plus' || data.effect === 'point-minus' || data.effect === 'game-plus') {
+      return;
+    }
 
     if (data.effect === 'confetti') {
       const isP1 = data.playerKey === 'p1';
@@ -135,7 +145,7 @@
 </script>
 
 <div class="fixed inset-0 pointer-events-none z-50 overflow-hidden select-none">
-  <!-- JUGADOR 1 -->
+  <!-- Jugador 1 -->
   <div class="fixed bottom-20 left-8 flex flex-col items-start pointer-events-none">
     {#each alertsP1 as alert (alert.id)}
       <div
@@ -151,7 +161,7 @@
     {/each}
   </div>
 
-  <!-- JUGADOR 2 -->
+  <!-- Jugador 2 -->
   <div class="fixed bottom-20 right-8 flex flex-col items-end pointer-events-none">
     {#each alertsP2 as alert (alert.id)}
       <div

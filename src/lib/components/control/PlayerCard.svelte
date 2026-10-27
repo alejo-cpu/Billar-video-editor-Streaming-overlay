@@ -1,6 +1,6 @@
 <script>
   import { matchStore } from '../../stores/matchStore.js';
-  import { slide, fade } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import { Pencil, Plus, Minus, UserCheck, ChevronDown, ChevronUp, Sparkles, RotateCcw, Check, Undo2 } from 'lucide-svelte';
   import ImageCropModal from './ImageCropModal.svelte';
 
@@ -17,10 +17,19 @@
   let showCropModal = false;
   let showEffectsMenu = false;
 
-  // Estado local para confirmacion y deshacer
   let undoActive = false;
   let rackBackup = null;
   let undoTimeout = null;
+
+  function handleAdjustBalls(delta) {
+    matchStore.sendEffect(delta > 0 ? 'point-plus' : 'point-minus', playerKey);
+    matchStore.adjustBalls(playerKey, delta);
+  }
+
+  function handleAdjustGames(delta) {
+    if (delta > 0) matchStore.sendEffect('game-plus', playerKey);
+    matchStore.adjustGames(playerKey, delta);
+  }
 
   function startNameEdit() {
     tempName = player.name;
@@ -48,6 +57,7 @@
   }
 
   function confirmRack() {
+    matchStore.sendEffect('game-plus', playerKey);
     rackBackup = matchStore.finishRack(playerKey);
     undoActive = true;
 
@@ -81,7 +91,7 @@
 <div class="bg-[#10131c] border transition-all duration-300 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 shadow-xl relative overflow-hidden flex-1
   {isTurn ? 'border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.15)]' : 'border-white/10'}"
 >
-  <!-- Cabecera de la tarjeta -->
+  <!-- Cabecera de tarjeta -->
   <div class="flex items-center justify-between border-b border-white/10 pb-2.5">
     <div class="flex items-center gap-2">
       <span class="text-xs font-mono font-bold tracking-widest text-neutral-400 uppercase">{title}</span>
@@ -177,13 +187,13 @@
       </span>
       <div class="flex items-center gap-2 w-full">
         <button
-          on:click={() => matchStore.adjustBalls(playerKey, -1)}
+          on:click={() => handleAdjustBalls(-1)}
           class="flex-1 py-2.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90"
         >
           <Minus size={18} />
         </button>
         <button
-          on:click={() => matchStore.adjustBalls(playerKey, 1)}
+          on:click={() => handleAdjustBalls(1)}
           class="flex-1 py-2.5 sm:py-2 bg-amber-500 hover:bg-amber-400 text-black font-black rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90 shadow-md"
         >
           <Plus size={18} />
@@ -197,13 +207,13 @@
       <span class="text-3xl font-black font-mono text-neutral-200">{player.games}</span>
       <div class="flex items-center gap-2 w-full">
         <button
-          on:click={() => matchStore.adjustGames(playerKey, -1)}
+          on:click={() => handleAdjustGames(-1)}
           class="flex-1 py-2.5 sm:py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90"
         >
           <Minus size={18} />
         </button>
         <button
-          on:click={() => matchStore.adjustGames(playerKey, 1)}
+          on:click={() => handleAdjustGames(1)}
           class="flex-1 py-2.5 sm:py-2 bg-neutral-700 hover:bg-neutral-600 text-white font-black rounded-xl sm:rounded-lg flex items-center justify-center transition active:scale-90 shadow-md"
         >
           <Plus size={18} />
@@ -213,7 +223,7 @@
 
   </div>
 
-  <!-- Transicion de cierre de rack y deshacer integrado -->
+  <!-- Cierre de rack y deshacer integrado -->
   {#if undoActive}
     <div transition:slide={{ duration: 250 }} class="relative overflow-hidden rounded-xl bg-amber-950/80 border border-amber-500/80 p-3 flex items-center justify-between shadow-lg">
       <span class="text-xs font-mono font-bold text-amber-200">
