@@ -48,6 +48,7 @@
       containerWidth = containerEl.clientWidth || window.innerWidth || 1920;
     }
 
+    // Traslacion continua en coma flotante con aceleracion GPU
     for (let i = 0; i < liveItems.length; i++) {
       const live = liveItems[i];
       if (!live.width && live.el) {
@@ -55,7 +56,7 @@
       }
       live.x -= SPEED * dt;
       if (live.el) {
-        live.el.style.transform = `translate3d(${live.x.toFixed(2)}px, 0, 0)`;
+        live.el.style.transform = `translate3d(${live.x}px, 0, 0)`;
       }
     }
 
@@ -109,11 +110,12 @@
     -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
   }
 
-  .smooth-gpu {
+  .smooth-logo {
+    transform: translateZ(0);
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
-    transform: translateZ(0);
-    image-rendering: -webkit-optimize-contrast;
+    filter: blur(0px);
+    image-rendering: auto;
   }
 </style>
 
@@ -129,7 +131,7 @@
     {#each liveItems as live (live.instanceId)}
       <div
         bind:this={live.el}
-        class="absolute top-0 bottom-0 flex items-center will-change-transform smooth-gpu"
+        class="absolute top-0 bottom-0 flex items-center will-change-transform"
         style="transform: translate3d({live.x}px, 0, 0);"
       >
         <div class="flex items-center gap-3 font-mono text-sm uppercase leading-none whitespace-nowrap shrink-0">
@@ -138,7 +140,7 @@
               <img 
                 src={live.item.logoUrl} 
                 alt="" 
-                class="h-6 max-w-[110px] w-auto object-contain shrink-0 smooth-gpu" 
+                class="h-6 max-w-[110px] w-auto object-contain shrink-0 smooth-logo" 
                 loading="eager"
                 decoding="sync"
               />

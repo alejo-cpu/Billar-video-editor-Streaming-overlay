@@ -35,12 +35,12 @@
   let showCropModalP2 = false;
   let showMissingVideoModal = false;
   let showMusicInfoModal = false;
+  let suggestedVideoFolder = '';
 
   let videoAspectCss = '16 / 9';
   let previewScale = 1;
   let resizeObserver = null;
 
-  // Auto-ocultado de controles a los 2.5s (EN PLAY Y EN PAUSA)
   let showControls = true;
   let hideControlsTimer = null;
 
@@ -69,7 +69,9 @@
   let samplingTimer = null;
   let wasVideoPlayingBeforeSample = false;
 
-  // Deduplicador de sonidos
+  // RASTREADOR DE CANCIÓN ACTUAL (Evita que el audio se recargue en bucle causando lag)
+  let activeTrackSongId = null;
+
   let playedKeyframeIds = new Set();
 
   const DEFAULT_AVATAR = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%231a1d26"/><circle cx="50" cy="38" r="19" fill="%234b5563"/><path d="M18,92 C18,68 32,62 50,62 C68,62 82,68 82,92 Z" fill="%234b5563"/></svg>`;
@@ -85,8 +87,8 @@
     { key: 'ball8', icon: '🎱', img: '/stickers/ball8.webp' }
   ];
 
-  /* ==================== ESTADO INICIAL BASE (T = 0) ==================== */
-  const STUDIO_KEY = 'billiards_studio_config_v7';
+  /* ==================== ESTADO BASE A T=0 ==================== */
+  const STUDIO_KEY = 'billiards_studio_config_v9';
   const savedStudio = typeof localStorage !== 'undefined' ? localStorage.getItem(STUDIO_KEY) : null;
   
   let studioConfig = savedStudio ? JSON.parse(savedStudio) : {
@@ -106,7 +108,6 @@
     }
   };
 
-  // Guardar copia inmutable del estado inicial de sponsors a T=0
   let initialTickerItems = JSON.parse(JSON.stringify(studioConfig.ticker.items));
 
   function persistStudio() {
@@ -124,7 +125,6 @@
 
   function applyStudioTickerChanges() {
     const cloned = JSON.parse(JSON.stringify(stagedTickerItems));
-    // Registra keyframe histórico SIN destruir el pasado a T=0
     triggerKeyframeWithAutosave(currentTime, 'setTickerItems', { items: cloned });
     showFeedback('Marcas registradas en ' + formatTime(currentTime));
   }
@@ -166,44 +166,49 @@
   /* ==================== GESTIÓN DE PROYECTOS ==================== */
   function showFeedback(msg) {
     saveFeedbackMessage = msg;
-    setTimeout(() => { saveFeedbackMessage = ''; }, 3500);
+    setTimeout(() => { saveFeedbackMessage = ''; }, 4500);
   }
 
   function buildProjectPayload() {
     return {
       version: '2.0',
-      projectName: $studioStore.projectName || ($studioStore.videoName ? $studioStore.videoName.replace(/\.[^/.]+$/, '') : 'partida_billar'),
+      projectName: $studioStore.projectName || ($studioStore.videoName ? $studioStore.videoName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_') : 'partida_billar'),
       videoName: $studioStore.videoName || '',
       duration: duration || 0,
       studioConfig,
       initialTickerItems,
       keyframes: $studioStore.keyframes,
       bgSettings,
-      bgPlaylist: bgPlaylist.map(s => ({ id: s.id, name: s.name, duration: s.duration })),
+      bgPlaylist: bgPlaylist.map(s => ({ 
+        id: s.id, 
+        name: s.name, 
+        duration: s.duration,
+        serverUrl: s.url 
+      })),
       videoAudioSettings,
       savedAt: Date.now()
     };
   }
 
-  async function handleSaveProject(forceSaveAs = false) {
+  async function handleSaveProject() {
     const payload = buildProjectPayload();
-    const res = await studioStore.saveProjectWithPicker(payload, forceSaveAs);
+    const res = await studioStore.saveProjectToServer(payload);
     if (res?.success) {
-      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      showFeedback(`✓ Guardado (${t})`);
+      showFeedback(`✓ Guardado en proyectos_billar/${payload.projectName}/`);
+    } else {
+      alert('Error guardando en servidor: ' + (res?.error || 'Desconocido'));
     }
   }
 
-  // Apertura directa infalible mediante selector de archivos
   function handleProjectFileLoad(e) {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        loadProjectFromObject(data);
+        await loadProjectFromObject(data);
         showFeedback('Proyecto abierto: ' + file.name);
       } catch (err) {
         alert('Error al leer el archivo de proyecto: ' + err.message);
@@ -213,7 +218,7 @@
     e.target.value = '';
   }
 
-  function loadProjectFromObject(projectData) {
+  async function loadProjectFromObject(projectData) {
     if (!projectData) return;
     if (projectData.studioConfig) {
       studioConfig = projectData.studioConfig;
@@ -224,13 +229,37 @@
     if (projectData.bgSettings) bgSettings = projectData.bgSettings;
     if (projectData.videoAudioSettings) videoAudioSettings = projectData.videoAudioSettings;
 
+    // Restaurar canciones directamente desde el servidor local
+    if (projectData.bgPlaylist && Array.isArray(projectData.bgPlaylist)) {
+      bgPlaylist = projectData.bgPlaylist.map(p => ({
+        id: p.id,
+        name: p.name,
+        duration: p.duration,
+        url: p.serverUrl || `/proyectos_billar/${projectData.projectName}/audio/${p.name}.mp3`,
+        file: null
+      }));
+    }
+
     studioStore.loadProjectData(projectData);
 
-    if (projectData.videoName) {
-      const currentLoadedName = $studioStore.videoFile ? $studioStore.videoFile.name : ($studioStore.videoName || '');
-      if (!currentLoadedName || currentLoadedName !== projectData.videoName) {
-        showMissingVideoModal = true;
+    const projName = projectData.projectName || 'partida';
+    const vName = projectData.videoName || '';
+    
+    // Comprobar si el video físico está dentro de la carpeta proyectos_billar/[Nombre]/video/
+    try {
+      const checkRes = await fetch(`/api/project/check-video?project=${encodeURIComponent(projName)}&video=${encodeURIComponent(vName)}`);
+      const checkData = await checkRes.json();
+      suggestedVideoFolder = checkData.suggestedPath || `public/proyectos_billar/${projName}/video`;
+
+      if (checkData.exists && checkData.videoUrl) {
+        studioStore.setVideoUrlDirect(checkData.videoUrl, vName);
+        return;
       }
+    } catch (e) {}
+
+    // SI NO HAY VIDEO CARGADO EN EL REPRODUCTOR, ABRIR EL MODAL SÍ O SÍ
+    if (!$studioStore.videoFile && !$studioStore.videoUrl) {
+      showMissingVideoModal = true;
     }
   }
 
@@ -244,7 +273,7 @@
     e.target.value = '';
   }
 
-  /* ==================== AUDIO CON FADES SUAVES ==================== */
+  /* ==================== AUDIO SIN LAG Y ONDA DINÁMICA ==================== */
   $: totalPlaylistSeconds = bgPlaylist.reduce((acc, s) => acc + (s.duration || 120), 0);
 
   $: if (duration > 0 && bgSettings.rangeEnd === 0) {
@@ -266,7 +295,6 @@
     const maxVol = Math.max(0, Math.min(1.0, bgSettings.volume ?? 0.35));
 
     if (videoSec < rStart || videoSec > rEnd) return 0;
-
     const span = rEnd - rStart;
     if (span <= 0) return 0;
     const fadeWindow = Math.min(3, span / 2);
@@ -308,6 +336,7 @@
 
   $: currentTrackInfo = getTrackAtVideoTime(currentTime);
 
+  // SINCRONIZACIÓN DE AUDIO SIN LAG (Compara por ID, no por string de URL)
   function syncAudioWithVideo(videoSec, playing) {
     if (!bgAudioElement || !bgPlaylist.length || isSamplingTrack) return;
 
@@ -320,12 +349,15 @@
       return;
     }
 
-    if (bgAudioElement.src !== track.song.url) {
+    // Solo recarga el src si la pista realmente cambió de canción
+    if (activeTrackSongId !== track.song.id) {
+      activeTrackSongId = track.song.id;
       bgAudioElement.src = track.song.url;
       bgAudioElement.currentTime = track.offset;
       if (playing) bgAudioElement.play().catch(() => {});
     } else {
-      if (Math.abs(bgAudioElement.currentTime - track.offset) > 0.4) {
+      // Solo ajusta el tiempo si se desvía más de 1.2 segundos (evita micro-cortes)
+      if (Math.abs(bgAudioElement.currentTime - track.offset) > 1.2) {
         bgAudioElement.currentTime = track.offset;
       }
       if (playing && bgAudioElement.paused) {
@@ -337,6 +369,22 @@
   }
 
   $: syncAudioWithVideo(currentTime, isPlaying);
+
+  // GENERADOR DE BARRAS DE ONDA DE AUDIO REACTIVAS A LA PLAYLIST (Tus dibujos 1 y 2)
+  $: waveformBars = (() => {
+    if (!bgPlaylist || bgPlaylist.length === 0) return [];
+    const bars = [];
+    // Cada canción de la playlist aporta su propio relieve sonoro único
+    bgPlaylist.forEach((song, sIdx) => {
+      const seed = (song.name.length * 13 + sIdx * 29) % 100;
+      for (let b = 0; b < 10; b++) {
+        // Alturas entre 4px y 24px según la canción
+        const h = 4 + (((seed + b * 17) % 20) + Math.sin(b * 0.8 + sIdx) * 6);
+        bars.push(Math.max(4, Math.min(24, Math.round(h))));
+      }
+    });
+    return bars;
+  })();
 
   function previewSongSample(song) {
     if (!bgAudioElement) return;
@@ -369,6 +417,7 @@
     if (samplingTimer) clearTimeout(samplingTimer);
     isSamplingTrack = false;
     samplingSongId = null;
+    activeTrackSongId = null; // Fuerza resincronización limpia
     if (bgAudioElement) bgAudioElement.pause();
 
     if (wasVideoPlayingBeforeSample && videoElement) {
@@ -379,29 +428,50 @@
     syncAudioWithVideo(currentTime, isPlaying);
   }
 
-  function handleMusicUpload(e) {
+  async function handleMusicUpload(e) {
     const files = Array.from(e.target.files || []).filter(f => {
       return f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(f.name);
     });
     if (!files.length) return;
 
-    const newTracks = files.map(file => {
-      const url = URL.createObjectURL(file);
-      return { id: Date.now() + Math.random(), name: file.name.replace(/\.[^/.]+$/, ''), file, url, duration: 180 };
-    });
+    const projName = $studioStore.projectName || 'partida';
 
-    bgPlaylist = [...bgPlaylist, ...newTracks];
-    newTracks.forEach(track => {
-      const a = new Audio(track.url);
-      a.onloadedmetadata = () => {
-        if (Number.isFinite(a.duration) && a.duration > 0) {
-          track.duration = Math.round(a.duration);
-          bgPlaylist = [...bgPlaylist];
-          handleRangeChange();
-        }
-      };
-    });
+    for (const file of files) {
+      try {
+        const res = await fetch(`/api/project/upload-audio?project=${encodeURIComponent(projName)}`, {
+          method: 'POST',
+          headers: { 'x-file-name': encodeURIComponent(file.name) },
+          body: file
+        });
+        const data = await res.json();
+        const songUrl = data.publicUrl || URL.createObjectURL(file);
+        const songName = file.name.replace(/\.[^/.]+$/, '');
+
+        const newTrack = {
+          id: Date.now() + Math.random(),
+          name: songName,
+          file,
+          url: songUrl,
+          duration: 180
+        };
+
+        const a = new Audio(songUrl);
+        a.onloadedmetadata = () => {
+          if (Number.isFinite(a.duration) && a.duration > 0) {
+            newTrack.duration = Math.round(a.duration);
+            bgPlaylist = [...bgPlaylist];
+            handleRangeChange();
+          }
+        };
+
+        bgPlaylist = [...bgPlaylist, newTrack];
+      } catch (err) {
+        console.warn('Error subiendo audio:', err);
+      }
+    }
+
     e.target.value = '';
+    handleRangeChange();
   }
 
   function moveSong(index, direction) {
@@ -412,17 +482,20 @@
     newArr.splice(index, 1);
     newArr.splice(target, 0, item);
     bgPlaylist = newArr;
+    activeTrackSongId = null; // Actualiza la onda visual y el orden sonoro
   }
 
   function removeSong(id) {
     bgPlaylist = bgPlaylist.filter(s => s.id !== id);
     if (samplingSongId === id) stopSongSample();
+    activeTrackSongId = null;
     handleRangeChange();
   }
 
   function clearPlaylist() {
     bgPlaylist = [];
     if (samplingSongId) stopSongSample();
+    activeTrackSongId = null;
     if (bgAudioElement) {
       bgAudioElement.pause();
       bgAudioElement.src = '';
@@ -437,14 +510,14 @@
       [copy[i], copy[j]] = [copy[j], copy[i]];
     }
     bgPlaylist = copy;
+    activeTrackSongId = null; // Reorganiza la onda de sonido visual de inmediato
     showFeedback('Lista mezclada');
   }
 
-  /* ==================== AUTO-OCULTADO A 2.5s (EN PLAY Y EN PAUSA) ==================== */
+  /* ==================== CONTROLES (SE OCULTAN A LOS 2.5s) ==================== */
   function resetControlsTimeout() {
     showControls = true;
     if (hideControlsTimer) clearTimeout(hideControlsTimer);
-    // Se oculta a los 2.5 segundos de inactividad del mouse SIEMPRE
     hideControlsTimer = setTimeout(() => {
       showControls = false;
     }, 2500);
@@ -461,8 +534,7 @@
 
     autoSaveTimer = setInterval(() => {
       if ($studioStore.videoFile && $studioStore.keyframes.length > 0) {
-        const payload = buildProjectPayload();
-        studioStore.autoSaveSilent(payload);
+        handleSaveProject();
       }
     }, 1000 * 60 * 5);
 
@@ -565,10 +637,7 @@
   function triggerKeyframeWithAutosave(time, type, payload, sound = true) {
     const shouldSave = studioStore.addKeyframe(time, type, payload, sound, true);
     if (shouldSave) {
-      setTimeout(() => { 
-        const p = buildProjectPayload();
-        studioStore.autoSaveSilent(p);
-      }, 1000);
+      setTimeout(() => { handleSaveProject(); }, 1000);
     }
   }
 
@@ -609,7 +678,7 @@
     triggerKeyframeWithAutosave(currentTime, 'toggleTicker', { visible }, false);
   }
 
-  /* ESTADO REACTIVO HISTÓRICO: Si retrocedes el video, la cinta vuelve a sus sponsors del pasado */
+  /* Estado reactivo histórico */
   $: activeState = (() => {
     let state = {
       p1: { ...studioConfig.p1, balls: 0, games: 0 },
@@ -621,7 +690,7 @@
       uiScale: { ...studioConfig.uiScale },
       ticker: {
         visible: studioConfig.ticker.visible,
-        items: initialTickerItems // Empieza SIEMPRE con el estado base a T=0
+        items: initialTickerItems
       }
     };
     
@@ -652,7 +721,7 @@
     return state;
   })();
 
-  /* Disparo de sonidos sin duplicaciones */
+  /* Deduplicación estricta de SFX */
   $: {
     if (isPlaying && Math.abs(currentTime - lastCheckedTime) > 0.08) {
       const crossed = keyframes.filter(k => k.time > lastCheckedTime && k.time <= currentTime);
@@ -715,7 +784,7 @@
   let isUploadingForRender = false;
 
   async function triggerRender() {
-    if (!$studioStore.videoFile) return;
+    if (!$studioStore.videoFile && !$studioStore.videoUrl) return;
     isUploadingForRender = true;
 
     try {
@@ -742,7 +811,6 @@
         hudSnapshots.push({ start: tStart, end: tEnd, dataUrl });
       }
 
-      // Cinta congelada en Frame 0 exacto sin cortes
       const tickerEvents = keyframes.filter(k => k.actionType === 'setTickerItems' || k.actionType === 'toggleTicker');
       const sortedTickerTimes = [0, ...tickerEvents.map(k => k.time), duration].sort((a,b)=>a-b);
       const uniqueTickerTimes = [...new Set(sortedTickerTimes)];
@@ -766,24 +834,23 @@
 
       isTickerFrozen = false;
 
-      const resVideo = await fetch('/api/upload-media', {
-        method: 'POST',
-        headers: { 'x-file-name': encodeURIComponent($studioStore.videoFile.name) },
-        body: $studioStore.videoFile
-      });
-      const videoData = await resVideo.json();
+      let videoFileNameToUse = $studioStore.videoName;
+      if ($studioStore.videoFile) {
+        const resVideo = await fetch('/api/upload-media', {
+          method: 'POST',
+          headers: { 'x-file-name': encodeURIComponent($studioStore.videoFile.name) },
+          body: $studioStore.videoFile
+        });
+        const videoData = await resVideo.json();
+        videoFileNameToUse = videoData.filename;
+      }
 
       const uploadedPlaylist = [];
       for (const song of bgPlaylist) {
-        if (song.file) {
-          const resMusic = await fetch('/api/upload-media', {
-            method: 'POST',
-            headers: { 'x-file-name': encodeURIComponent(song.file.name) },
-            body: song.file
-          });
-          const musicData = await resMusic.json();
-          uploadedPlaylist.push({ filename: musicData.filename, duration: song.duration });
-        }
+        uploadedPlaylist.push({
+          filename: song.url.replace(/^\//, ''),
+          duration: song.duration
+        });
       }
 
       isUploadingForRender = false;
@@ -797,7 +864,7 @@
         ws.send(JSON.stringify({
           type: 'START_RENDER',
           payload: {
-            videoFileName: videoData.filename,
+            videoFileName: videoFileNameToUse,
             events: keyframes,
             duration,
             bgSettings,
@@ -854,13 +921,13 @@
 
 <div class="min-h-screen bg-[#07080b] text-white font-sans flex flex-col overflow-x-hidden select-none">
   
-  <!-- CABECERA LIMPIA SIN MENSAJES DE NOMBRE AMONTONADOS -->
+  <!-- CABECERA LIMPIA -->
   <header class="h-14 border-b border-white/10 px-4 sm:px-6 flex items-center justify-between shrink-0 bg-[#0c0e15] z-30">
     <div class="flex items-center gap-3 min-w-0">
       <Film size={20} class="text-amber-400 shrink-0" />
       <div>
-        <h1 class="text-sm font-black tracking-wider uppercase font-mono text-white">Estudio de Post-Producción</h1>
-        <p class="text-[10px] text-neutral-400 font-mono">Editor VOD Profesional para Partidas de Billar</p>
+        <h1 class="text-xs sm:text-sm font-black tracking-wider uppercase font-mono text-white">Estudio de Post-Producción</h1>
+        <p class="text-[9px] sm:text-[10px] text-neutral-400 font-mono">Editor VOD Profesional para Partidas de Billar</p>
       </div>
     </div>
 
@@ -868,38 +935,38 @@
     <div class="flex items-center gap-2 sm:gap-3">
       
       {#if saveFeedbackMessage}
-        <span class="text-xs font-mono font-bold text-emerald-400 flex items-center gap-1 animate-pulse">
+        <span class="text-xs font-mono font-bold text-emerald-400 flex items-center gap-1">
           {saveFeedbackMessage}
         </span>
       {/if}
 
-      <!-- Cambiar Video (Re-link manteniendo marcas) -->
+      <!-- Cambiar Video -->
       {#if videoUrl}
         <button
           on:click={() => relinkFileInput.click()}
           class="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 flex items-center gap-1.5 transition text-neutral-300 hover:text-white"
-          title="Cambiar archivo de video manteniendo todas las marcas"
+          title="Cambiar archivo de video manteniendo todas las marcas intactas"
         >
           <FileVideo size={14} class="text-amber-400" />
           <span class="hidden md:inline">Cambiar Video</span>
         </button>
       {/if}
 
-      <!-- Guardar Proyecto -->
+      <!-- Guardar Proyecto en disco -->
       <button
-        on:click={() => handleSaveProject(false)}
+        on:click={handleSaveProject}
         class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 flex items-center gap-1.5 transition text-white"
-        title="Guardar archivo .billiard"
+        title="Guardar archivo .billiard en proyectos_billar/"
       >
         <Save size={14} class="text-amber-400" />
         <span>Guardar</span>
       </button>
 
-      <!-- Abrir Proyecto (SELECTOR DIRECTO INFALIBLE) -->
+      <!-- Abrir Proyecto directo -->
       <button
         on:click={() => projectFileInput.click()}
         class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold rounded-lg border border-white/10 flex items-center gap-1.5 transition text-white"
-        title="Abrir un archivo .billiard de tu PC"
+        title="Abrir un archivo .billiard de tu equipo"
       >
         <Folder size={14} class="text-amber-400" />
         <span>Abrir</span>
@@ -927,7 +994,7 @@
     
     <div class="flex flex-col gap-3 min-w-0">
       
-      <!-- REPRODUCTOR DE VIDEO (AUTO-OCULTA CONTROLES A LOS 2.5s EN PLAY Y PAUSA) -->
+      <!-- REPRODUCTOR DE VIDEO -->
       <div 
         bind:this={videoContainer}
         tabindex="0"
@@ -961,7 +1028,6 @@
             }}
           ></video>
 
-          <!-- OVERLAY PROPORCIONAL 1:1 -->
           <div 
             class="video-overlay-wrapper absolute top-0 left-0 pointer-events-none overflow-hidden origin-top-left"
             style="
@@ -989,27 +1055,39 @@
             class="absolute inset-0 pointer-events-none z-40 w-full h-full"
           ></canvas>
 
-          <!-- CONTROLES DEL REPRODUCTOR (DESAPARECEN TRAS 2.5s INCLUSO EN PAUSA) -->
+          <!-- CONTROLES DEL REPRODUCTOR CON ONDA DE AUDIO INTEGRADA (28px de altura, corte trapezoidal) -->
           <div 
             class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent p-3 flex flex-col gap-1 transition-opacity duration-300 z-50
             {showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}"
           >
             
-            <!-- PISTA SUPERIOR: LÍNEA DE RANGO DE MÚSICA (CLARAMENTE ENCIMA DE LA BARRA) -->
-            {#if bgPlaylist.length > 0 && duration > 0}
-              <div class="w-full h-2 relative mb-1 flex items-center pointer-events-none">
+            <!-- PISTA SUPERIOR: ONDA DE AUDIO DINÁMICA (TUS DIBUJOS 1 Y 2) -->
+            <div class="w-full h-7 relative flex items-end pointer-events-none">
+              {#if bgPlaylist.length > 0 && duration > 0}
                 <div
-                  class="absolute h-1.5 bg-amber-400 rounded-full shadow-[0_0_8px_rgba(251,191,36,0.8)] border border-amber-300"
+                  class="absolute bottom-0 h-7 flex items-end overflow-visible"
                   style="
                     left: {(Math.max(0, bgSettings.rangeStart || 0) / duration) * 100}%;
                     width: {(Math.max(0, (bgSettings.rangeEnd || duration) - (bgSettings.rangeStart || 0)) / duration) * 100}%;
+                    clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 100%, 0 100%);
+                    background: linear-gradient(180deg, rgba(245, 158, 11, 0.45) 0%, rgba(245, 158, 11, 0.15) 100%);
+                    border-top: 1.5px solid rgba(251, 191, 36, 0.85);
                   "
-                  title="Música de fondo activa"
-                ></div>
-              </div>
-            {/if}
+                >
+                  <!-- Barras de ecualizador rítmicas vivas que cambian con las canciones -->
+                  <div class="w-full h-full flex items-end justify-between px-1 gap-[2px]">
+                    {#each waveformBars as bHeight, idx}
+                      <div 
+                        class="flex-1 bg-amber-400/70 rounded-t-sm"
+                        style="height: {bHeight}px;"
+                      ></div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
 
-            <!-- BARRA DE TIEMPO DEL VIDEO (SEPARADA DEBAJO) -->
+            <!-- BARRA DE TIEMPO DEL VIDEO (FLUSH JUSTO DEBAJO DE LA ONDA) -->
             <div 
               class="relative w-full h-3 flex items-center cursor-pointer select-none"
               on:click={(e) => {
@@ -1489,7 +1567,7 @@
             {#if bgPlaylist.length > 0}
               <button on:click={clearPlaylist} class="text-[10px] text-rose-400 hover:text-rose-300 font-bold px-1.5 py-1">Vaciar</button>
             {/if}
-            <button on:click={() => musicFilesInput.click()} class="text-[10px] font-bold px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1">
+            <button on:click={() => musicFilesInput.click()} class="text-[10px] font-bold px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1">
               <Plus size={12} class="text-amber-400" /> Canciones
             </button>
             <button on:click={() => musicFolderInput.click()} class="text-[10px] font-bold px-2 py-1 bg-neutral-800 hover:bg-neutral-700 rounded-lg border border-white/10 flex items-center gap-1">
@@ -1581,7 +1659,7 @@
               <span>Bucle Playlist</span>
             </label>
 
-            <!-- BOTÓN MEZCLAR LIMPIO -->
+            <!-- BOTÓN MEZCLAR -->
             <button
               type="button"
               on:click={shufflePlaylistOnce}
@@ -1610,7 +1688,6 @@
             {#each bgPlaylist as song, idx (song.id)}
               <div class="flex items-center justify-between p-1.5 bg-neutral-900/80 rounded-lg text-xs font-mono border border-white/5 {currentTrackInfo?.song?.id === song.id ? 'border-amber-500/70 bg-amber-950/30' : ''}">
                 <div class="flex items-center gap-2 truncate flex-1 min-w-0 pr-1">
-                  <!-- Muestra rápida de 6 segundos -->
                   <button
                     type="button"
                     on:click|stopPropagation={() => previewSongSample(song)}
@@ -1770,15 +1847,33 @@
     </div>
   {/if}
 
-  <!-- MODAL DE RE-VINCULACIÓN INTELIGENTE DE VIDEO -->
+  <!-- MODAL DE RE-VINCULACIÓN INTELIGENTE DE VIDEO CON SUGERENCIA OPCIONAL -->
   {#if showMissingVideoModal}
     <div class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
-      <div class="bg-[#10131c] border border-amber-500/50 rounded-2xl w-full max-w-md p-6 text-white shadow-2xl flex flex-col gap-4 text-center items-center">
+      <div class="bg-[#10131c] border border-amber-500/50 rounded-2xl w-full max-w-lg p-6 text-white shadow-2xl flex flex-col gap-4 text-center items-center">
         <AlertCircle size={36} class="text-amber-400" />
         <h3 class="text-sm font-bold tracking-wide uppercase font-mono">Video no localizado</h3>
         <p class="text-xs text-neutral-300 leading-relaxed">
           Parece que la ubicación del video o su nombre han cambiado, por favor seleccione el video que va a editar.
         </p>
+
+        <!-- RECOMENDACIÓN TOTALMENTE OPCIONAL PARA TUS 28 GB -->
+        {#if suggestedVideoFolder}
+          <div class="bg-black/50 border border-white/10 rounded-xl p-3 text-left w-full text-xs">
+            <span class="text-amber-400 font-bold flex items-center gap-1.5 mb-1">
+              <Info size={13} /> Recomendación (Totalmente Opcional):
+            </span>
+            <p class="text-neutral-400 text-[11px] leading-relaxed">
+              Si deseas que este video se abra de forma automática en el futuro sin tener que seleccionarlo cada vez, puedes mover o copiar el archivo de video dentro de esta carpeta de tu disco:
+            </p>
+            <div class="bg-neutral-900 border border-neutral-700 p-2 rounded mt-1.5 font-mono text-[10px] text-amber-300 break-all select-all">
+              {suggestedVideoFolder}
+            </div>
+            <p class="text-neutral-500 text-[10px] mt-1 italic">
+              (Esto es una sugerencia para tu comodidad si tienes espacio; si no, simplemente selecciónalo con el botón de abajo sin copiar nada).
+            </p>
+          </div>
+        {/if}
 
         <div class="flex items-center gap-3 w-full justify-center pt-2">
           <button

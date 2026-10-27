@@ -1,4 +1,5 @@
 <script>
+  import { scale } from 'svelte/transition';
   import { matchStore } from '../../stores/matchStore.js';
   import NumberRoll from './NumberRoll.svelte';
 
@@ -17,15 +18,9 @@
   $: maxNameLength = Math.max((p1.name || '').length, (p2.name || '').length);
   $: isShortMode = maxNameLength <= 6;
 
-  $: hudWidthClass = (() => {
-    if (showAvatars) return isShortMode ? 'w-[760px]' : 'w-[900px]';
-    return isShortMode ? 'w-[700px]' : 'w-[840px]';
-  })();
-
-  $: timerWidthClass = (() => {
-    if (showAvatars) return isShortMode ? 'w-[540px]' : 'w-[680px]';
-    return isShortMode ? 'w-[480px]' : 'w-[620px]';
-  })();
+  // Ancho solido constante para evitar tirones en el marco al alternar fotos
+  $: hudWidthClass = isShortMode ? 'w-[750px]' : 'w-[890px]';
+  $: timerWidthClass = isShortMode ? 'w-[520px]' : 'w-[660px]';
 
   $: isTimerLow = timer.enabled && timer.running && timer.seconds <= 10;
   $: isTimerEmergency = timer.enabled && timer.running && timer.seconds <= 5;
@@ -68,13 +63,14 @@
           </span>
         </div>
 
-        <!-- Contenedor de avatar con transicion suave de ancho -->
-        <div class="overflow-hidden transition-all duration-300 ease-in-out flex items-center justify-center shrink-0 {showAvatars ? 'w-10 opacity-100 ml-2' : 'w-0 opacity-0 ml-0 pointer-events-none'}">
-          <img alt={p1.name} class="w-10 h-10 rounded-full object-cover shrink-0 bg-neutral-900
-            {isP1Active ? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'ring-1 ring-white/20'}" 
-            src={p1.avatar} 
-          />
-        </div>
+        {#if showAvatars}
+          <div transition:scale={{ duration: 200 }} class="relative shrink-0 w-10 h-10 flex items-center justify-center">
+            <img alt={p1.name} class="w-10 h-10 rounded-full object-cover bg-neutral-900
+              {isP1Active ? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'ring-1 ring-white/20'}" 
+              src={p1.avatar} 
+            />
+          </div>
+        {/if}
       </div>
 
       <!-- Centro -->
@@ -95,13 +91,14 @@
 
       <!-- Jugador 2 -->
       <div class="flex items-center justify-between w-full min-w-0 pl-3">
-        <!-- Contenedor de avatar con transicion suave de ancho -->
-        <div class="overflow-hidden transition-all duration-300 ease-in-out flex items-center justify-center shrink-0 {showAvatars ? 'w-10 opacity-100 mr-2' : 'w-0 opacity-0 mr-0 pointer-events-none'}">
-          <img alt={p2.name} class="w-10 h-10 rounded-full object-cover shrink-0 bg-neutral-900
-            {isP2Active ? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'ring-1 ring-white/20'}" 
-            src={p2.avatar} 
-          />
-        </div>
+        {#if showAvatars}
+          <div transition:scale={{ duration: 200 }} class="relative shrink-0 w-10 h-10 flex items-center justify-center">
+            <img alt={p2.name} class="w-10 h-10 rounded-full object-cover bg-neutral-900
+              {isP2Active ? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'ring-1 ring-white/20'}" 
+              src={p2.avatar} 
+            />
+          </div>
+        {/if}
 
         <div class="flex-1 min-w-0 px-3 flex items-center justify-center">
           <span class="text-sm font-extrabold tracking-wider text-white uppercase truncate text-center w-full" title={p2.name}>
