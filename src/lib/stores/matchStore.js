@@ -18,9 +18,8 @@ const defaultState = {
   ticker: {
     visible: true,
     items: [
-      { id: 1, type: 'sponsor', text: 'HDP BILLAR', logoUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1Yaq_cjnSVkJC6znloVQB8rr-RtT7TzoTWiWRxQwQs3a025Nj6qxaozs1q_BiOqQkZPh-lKhIZt1G3Phnbss1OVe0fVOph9yvzCF9LU69opfKFIzldqS49gz9oi_ma2BGfVnZE8uoeAvxALg9IXcYy4lCZa1dmODzDU_uwcMpG61_CtLe5yz6LfplFeF2DCHibu400ubLMc75xyuQeU2tI6nN-CmxN-oRTyn4tU-2ygc-Um64MBTB1gIEzEUM8wgK1w', active: true },
-      { id: 2, type: 'aviso', text: 'GRAN FINAL ONE POCKET', logoUrl: '', active: true },
-      { id: 3, type: 'sponsor', text: 'DIAMOND TABLES', logoUrl: '', active: true }
+      { id: 1, type: 'sponsor', text: 'HDP BILLAR', logoUrl: '', active: true },
+      { id: 2, type: 'aviso', text: 'GRAN FINAL ONE POCKET', logoUrl: '', active: true }
     ]
   }
 };
@@ -97,6 +96,20 @@ function createMatchStore() {
         return state;
       });
     },
+    setModality: (mod) => {
+      update((state) => {
+        state.modality = mod.toUpperCase();
+        broadcast(state);
+        return state;
+      });
+    },
+    setRace: (race) => {
+      update((state) => {
+        state.race = race.toUpperCase();
+        broadcast(state);
+        return state;
+      });
+    },
     sendEffect: (effectName, playerKey) => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -149,10 +162,39 @@ function createMatchStore() {
     },
     adjustBalls: (playerKey, delta) => {
       update((state) => {
-        let cur = state[playerKey].balls;
-        if (delta > 0) cur = cur >= 8 ? 0 : cur + 1;
-        else cur = cur <= -25 ? 0 : cur - 1;
-        state[playerKey].balls = cur;
+        state[playerKey].balls = state[playerKey].balls + delta;
+        broadcast(state);
+        return state;
+      });
+    },
+    resetBalls: () => {
+      update((state) => {
+        state.p1.balls = 0;
+        state.p2.balls = 0;
+        broadcast(state);
+        return state;
+      });
+    },
+    finishRack: (winnerKey) => {
+      let backup = null;
+      update((state) => {
+        backup = {
+          p1: { ...state.p1 },
+          p2: { ...state.p2 }
+        };
+        state[winnerKey].games += 1;
+        state.p1.balls = 0;
+        state.p2.balls = 0;
+        broadcast(state);
+        return state;
+      });
+      return backup;
+    },
+    restoreRackBackup: (backup) => {
+      if (!backup) return;
+      update((state) => {
+        state.p1 = { ...state.p1, ...backup.p1 };
+        state.p2 = { ...state.p2, ...backup.p2 };
         broadcast(state);
         return state;
       });
@@ -215,7 +257,7 @@ function createMatchStore() {
     },
     setCustomTimer: (secs) => {
       update((state) => {
-        const s = Math.max(5, parseInt(secs) || 30);
+        const s = Math.max(5, parseInt(secs, 10) || 30);
         state.timer.customInput = s;
         state.timer.maxSeconds = s;
         state.timer.seconds = s;

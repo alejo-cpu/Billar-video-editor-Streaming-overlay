@@ -57,10 +57,27 @@
     isDragging = false;
   }
 
+  function onTouchStart(e) {
+    if (e.touches && e.touches.length === 1) {
+      isDragging = true;
+      startX = e.touches[0].clientX - panX;
+      startY = e.touches[0].clientY - panY;
+    }
+  }
+
+  function onTouchMove(e) {
+    if (!isDragging || !e.touches || e.touches.length !== 1) return;
+    panX = Math.max(-100, Math.min(100, e.touches[0].clientX - startX));
+    panY = Math.max(-100, Math.min(100, e.touches[0].clientY - startY));
+  }
+
+  function onTouchEnd() {
+    isDragging = false;
+  }
+
   function saveCrop() {
     try {
       const ctx = canvas.getContext('2d');
-      // Resolución de 300x300 de alta definición (adiós pixelación)
       canvas.width = 300;
       canvas.height = 300;
 
@@ -94,7 +111,7 @@
   <div class="bg-[#12151e] border border-white/20 rounded-2xl w-full max-w-md p-6 text-white shadow-2xl flex flex-col gap-5">
     
     <div class="flex items-center justify-between border-b border-white/10 pb-3">
-      <h3 class="text-base font-bold tracking-wide">Editar Foto del Jugador (Alta Definición)</h3>
+      <h3 class="text-base font-bold tracking-wide">Editar Foto del Jugador</h3>
       <button on:click={() => dispatch('close')} class="text-neutral-400 hover:text-white transition">
         <X size={20} />
       </button>
@@ -125,12 +142,15 @@
     {/if}
 
     <div class="flex flex-col items-center justify-center my-2">
-      <p class="text-[11px] text-neutral-400 mb-2">Arrastrá para reubicar la imagen en el círculo</p>
+      <p class="text-[11px] text-neutral-400 mb-2">Arrastra con el raton o dedo para reubicar</p>
       <div
-        class="w-44 h-44 rounded-full border-2 border-amber-400 overflow-hidden relative bg-black cursor-grab active:cursor-grabbing select-none shadow-[0_0_15px_rgba(245,158,11,0.3)]"
+        class="w-44 h-44 rounded-full border-2 border-amber-400 overflow-hidden relative bg-black cursor-grab active:cursor-grabbing select-none shadow-[0_0_15px_rgba(245,158,11,0.3)] touch-none"
         on:mousedown={onMouseDown}
         on:mousemove={onMouseMove}
         on:mouseup={onMouseUp}
+        on:touchstart={onTouchStart}
+        on:touchmove={onTouchMove}
+        on:touchend={onTouchEnd}
       >
         <img
           bind:this={imgElement}
