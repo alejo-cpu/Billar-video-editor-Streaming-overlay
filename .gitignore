@@ -1,7 +1,8 @@
 # ==========================================
-# DEPENDENCIAS
+# DEPENDENCIAS Y ENTORNOS
 # ==========================================
 node_modules/
+runtime/
 .pnpm-store/
 npm-debug.log*
 yarn-debug.log*
@@ -19,7 +20,6 @@ vite.config.js.timestamp*
 
 # ==========================================
 # RENDERS Y SUBIDAS TEMPORALES
-# (Evita subir gigas de videos y capturas)
 # ==========================================
 **/public/renders/*
 !**/public/renders/.gitkeep
@@ -27,7 +27,7 @@ vite.config.js.timestamp*
 !**/public/temp_uploads/.gitkeep
 
 # ==========================================
-# ARCHIVOS COMPRIMIDOS Y REPORTES DE CÓDIGO
+# ARCHIVOS COMPRIMIDOS Y REPORTES
 # ==========================================
 *.zip
 *.tar.gz
@@ -35,14 +35,15 @@ vite.config.js.timestamp*
 *.7z
 repomix-output.xml
 
-# Carpeta de música externa/descargas (si no quieres subirla a Git)
+# Carpetas externas y proyectos locales
 musica/
+public/proyectos_billar/
 
-# Archivo residual creado por error de consola
+# Archivo residual
 0
 
 # ==========================================
-# ARCHIVOS DE SISTEMA OPERATIVO Y EDITORES
+# ARCHIVOS DE SISTEMA Y EDITORES
 # ==========================================
 .DS_Store
 Thumbs.db
