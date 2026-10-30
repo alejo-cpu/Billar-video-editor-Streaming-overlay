@@ -1,193 +1,295 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 
-  export let items = [];
-  export let visible = true;
-  export let scale = 1.0;
-  export let isFrozen = false;
-  export let isPlaying = false;
+	export let items = [];
+	export let visible = true;
+	export let scale = 1.0;
+	export let isFrozen = false;
+	export let isPlaying = false;
 
-  const SPEED = 75; // Píxeles por segundo
-  const GAP = 28;   // Separación limpia entre marcas (sin espacios gigantes)
+	$: activeQueue = (items || []).filter((i) => i.active);
 
-  $: activeItems = (items || []).filter(i => i.active);
+	$: loopBlock = (() => {
+		if (activeQueue.length === 0) return [];
+		let list = [...activeQueue];
+		while (list.length < 16) {
+			list = [...list, ...activeQueue];
+		}
+		return list;
+	})();
 
-  let conveyorBoxes = [];
-  let itemQueueIndex = 0;
-  let animationFrameId = null;
-  let lastFrameTime = null;
-  let boxCounter = 0;
+	const SPEED = 85;
+	const GAP = 42;
 
-  // Cálculo tipográfico ajustado para que no queden huecos excesivos
-  function estimateItemWidth(item) {
-    const textW = (item.text || '').length * 8.5;
-    const logoW = item.logoUrl ? 90 : 0;
-    const badgeW = item.type !== 'sponsor' ? 65 : 0;
-    return Math.max(120, Math.round(textW + logoW + badgeW + 28));
-  }
+	let containerEl;
+	let containerWidth = 1920;
+	let liveItems = [];
+	let queueIndex = 0;
+	let nextInstanceId = 1;
+	let animId = null;
+	let lastTime = null;
+	let lastSignature = '';
+	let isBreathing = false;
 
-  function createBox(item, startX) {
-    boxCounter++;
-    return {
-      uid: `box_${boxCounter}_${Date.now()}`,
-      item,
-      x: startX,
-      width: estimateItemWidth(item)
-    };
-  }
+	$: activeSignature = activeQueue
+		.map((i) => (i.id || i.text) + ':' + (i.active ? '1' : '0'))
+		.join('|');
 
-  function seedConveyor() {
-    if (activeItems.length === 0) {
-      conveyorBoxes = [];
-      return;
-    }
-    const initial = [];
-    let currentX = 0;
-    let idx = 0;
-    while (currentX < 2400) {
-      const it = activeItems[idx % activeItems.length];
-      const box = createBox(it, currentX);
-      initial.push(box);
-      currentX += box.width + GAP;
-      idx++;
-    }
-    itemQueueIndex = idx % activeItems.length;
-    conveyorBoxes = initial;
-  }
+	$: {
+		if (activeSignature !== lastSignature && visible) {
+			lastSignature = activeSignature;
+			triggerBreathingTransition();
+		}
+	}
 
-  $: if (activeItems.length > 0 && conveyorBoxes.length === 0) {
-    seedConveyor();
-  }
+	function triggerBreathingTransition() {
+		isBreathing = true;
+		setTimeout(() => {
+			resetConveyor();
+			isBreathing = false;
+		}, 280);
+	}
 
-  function updateConveyor(now) {
-    if (!lastFrameTime) lastFrameTime = now;
-    const deltaSec = (now - lastFrameTime) / 1000;
-    lastFrameTime = now;
+	function spawnItem(startX) {
+		if (activeQueue.length === 0) return;
+		const data = activeQueue[queueIndex % activeQueue.length];
+		queueIndex++;
 
-    if (isPlaying && !isFrozen && activeItems.length > 0) {
-      const distance = SPEED * deltaSec;
+		liveItems = [
+			...liveItems,
+			{
+				instanceId: nextInstanceId++,
+				item: data,
+				x: startX,
+				width: 0,
+				el: null
+			}
+		];
+	}
 
-      const updated = [];
-      for (let i = 0; i < conveyorBoxes.length; i++) {
-        const b = conveyorBoxes[i];
-        b.x -= distance;
-        if (b.x + b.width > -50) {
-          updated.push(b);
-        }
-      }
+	function resetConveyor() {
+		liveItems = [];
+		queueIndex = 0;
+		if (activeQueue.length === 0) return;
 
-      let rightmostEdge = 0;
-      for (let i = 0; i < updated.length; i++) {
-        const edge = updated[i].x + updated[i].width;
-        if (edge > rightmostEdge) rightmostEdge = edge;
-      }
+		if (containerEl) {
+			containerWidth = containerEl.clientWidth || 1920;
+		}
 
-      if (rightmostEdge < 1920) {
-        const nextItem = activeItems[itemQueueIndex % activeItems.length];
-        if (nextItem) {
-          const spawnX = Math.max(1920, rightmostEdge + GAP);
-          const newBox = createBox(nextItem, spawnX);
-          updated.push(newBox);
-          itemQueueIndex = (itemQueueIndex + 1) % activeItems.length;
-        }
-      }
+		let curX = 0;
+		let count = 0;
+		while (curX < containerWidth && count < Math.max(8, activeQueue.length * 3)) {
+			const data = activeQueue[queueIndex % activeQueue.length];
+			queueIndex++;
+			const baseEstimate = 140;
+			liveItems = [
+				...liveItems,
+				{
+					instanceId: nextInstanceId++,
+					item: data,
+					x: curX,
+					width: baseEstimate,
+					el: null
+				}
+			];
+			curX += baseEstimate + GAP;
+			count++;
+		}
+	}
 
-      conveyorBoxes = updated;
-    }
+	function updateConveyor(now) {
+		if (!lastTime) lastTime = now;
+		const dt = (now - lastTime) / 1000;
+		lastTime = now;
 
-    animationFrameId = requestAnimationFrame(updateConveyor);
-  }
+		if (dt > 0.1) {
+			animId = requestAnimationFrame(updateConveyor);
+			return;
+		}
 
-  onMount(() => {
-    seedConveyor();
-    lastFrameTime = performance.now();
-    animationFrameId = requestAnimationFrame(updateConveyor);
-  });
+		if (containerEl) {
+			containerWidth = containerEl.clientWidth || 1920;
+		}
 
-  onDestroy(() => {
-    if (animationFrameId) cancelAnimationFrame(animationFrameId);
-  });
+		if (!isFrozen) {
+			for (let i = 0; i < liveItems.length; i++) {
+				const live = liveItems[i];
+				if (live.el && (!live.width || live.width <= 140)) {
+					const measuredW = live.el.offsetWidth;
+					if (measuredW > 0) live.width = measuredW;
+				}
+				if (isPlaying) {
+					live.x -= SPEED * dt;
+				}
+				if (live.el) {
+					live.el.style.transform = `translate3d(${live.x}px, 0, 0)`;
+				}
+			}
+
+			if (activeQueue.length > 0) {
+				if (liveItems.length === 0) {
+					spawnItem(containerWidth);
+				} else {
+					const last = liveItems[liveItems.length - 1];
+					if (last && last.el && (!last.width || last.width <= 140)) {
+						const mw = last.el.offsetWidth;
+						if (mw > 0) last.width = mw;
+					}
+					if (last && last.width > 0) {
+						const nextSpawnX = last.x + last.width + GAP;
+						if (nextSpawnX <= containerWidth) {
+							spawnItem(nextSpawnX);
+						}
+					}
+				}
+			}
+
+			if (liveItems.length > 0 && liveItems[0].width > 0 && isPlaying) {
+				if (liveItems[0].x + liveItems[0].width < -40) {
+					liveItems = liveItems.slice(1);
+				}
+			}
+		}
+
+		animId = requestAnimationFrame(updateConveyor);
+	}
+
+	function handleResize() {
+		if (containerEl) {
+			containerWidth = containerEl.clientWidth || 1920;
+		}
+	}
+
+	onMount(() => {
+		handleResize();
+		window.addEventListener('resize', handleResize);
+		resetConveyor();
+		animId = requestAnimationFrame(updateConveyor);
+	});
+
+	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('resize', handleResize);
+			if (animId) cancelAnimationFrame(animId);
+		}
+	});
 </script>
 
-<style>
-  /* Altura 100% y flex centrado: asegura 17px de margen arriba y abajo para que AVISO nunca se corte */
-  .ticker-box {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    will-change: transform, left;
-    white-space: nowrap;
-  }
-</style>
-
 <footer
-  class="fixed bottom-0 left-0 right-0 h-14 border-t border-white/15 px-6 flex items-center justify-between z-40 shrink-0 gap-6 pointer-events-none select-none shadow-[0_-8px_25px_rgba(0,0,0,0.85)]"
-  style="
+	class="fixed bottom-0 left-0 right-0 h-14 border-t border-white/15 px-6 flex items-center justify-between z-40 shrink-0 pointer-events-none select-none shadow-[0_-8px_25px_rgba(0,0,0,0.85)]"
+	style="
     background: linear-gradient(180deg, rgba(16, 19, 26, 0.95) 0%, rgba(7, 8, 11, 0.97) 100%);
     transform: translateY({visible ? '0%' : '140%'}) scale({scale}); 
     transform-origin: bottom center; 
-    transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+    transition: transform 1.2s cubic-bezier(0.16, 1, 0.3, 1);
   "
 >
-  <div class="flex-1 overflow-hidden relative ticker-mask min-w-0 h-full flex items-center">
-    
-    {#if isFrozen}
-      <div class="studio-marquee-segment flex items-center w-max h-full">
-        {#each activeItems as item}
-          <div class="flex items-center gap-3 pr-8 font-mono text-sm uppercase flex-shrink-0">
-            {#if item.logoUrl}
-              <img src={item.logoUrl} alt="" class="h-6 max-w-[100px] object-contain flex-shrink-0" />
-            {/if}
-            {#if item.type === 'sponsor'}
-              <span class="text-sm font-extrabold tracking-widest text-white">{item.text}</span>
-              <span class="text-amber-400 font-black">★</span>
-            {:else if item.type === 'aviso'}
-              <span class="px-2 py-0.5 text-xs rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex-shrink-0 leading-normal">AVISO</span>
-              <span class="text-xs font-bold text-neutral-200">{item.text}</span>
-              <span class="text-blue-400">●</span>
-            {:else if item.type === 'advertencia'}
-              <span class="px-2 py-0.5 text-xs rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex-shrink-0 leading-normal">ATENCIÓN</span>
-              <span class="text-xs font-bold text-amber-200">{item.text}</span>
-              <span class="text-amber-400">▲</span>
-            {:else}
-              <span class="text-xs text-neutral-300">{item.text}</span>
-              <span class="text-neutral-500">◆</span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {:else}
-      <div class="relative w-full h-full overflow-hidden">
-        {#each conveyorBoxes as b (b.uid)}
-          <div 
-            class="ticker-box flex items-center gap-3 font-mono text-sm uppercase"
-            style="left: {b.x}px;"
-          >
-            {#if b.item.logoUrl}
-              <img src={b.item.logoUrl} alt="" class="h-6 max-w-[100px] object-contain flex-shrink-0" />
-            {/if}
+	<div
+		bind:this={containerEl}
+		class="flex-1 overflow-hidden relative ticker-mask min-w-0 h-full flex items-center transition-opacity duration-300 {isBreathing
+			? 'opacity-0'
+			: 'opacity-100'}"
+	>
+		{#if isFrozen}
+			<div class="studio-marquee-segment flex items-center w-max h-full">
+				{#each loopBlock as item}
+					<div class="flex items-center gap-3 pr-10 font-mono text-sm uppercase flex-shrink-0">
+						{#if item.logoUrl}
+							<div class="h-6 max-w-[100px] min-w-[28px] flex items-center justify-center shrink-0">
+								<img
+									src={item.logoUrl}
+									alt=""
+									class="h-6 max-w-[100px] w-auto object-contain shrink-0 smooth-logo bg-transparent"
+								/>
+							</div>
+						{/if}
+						{#if item.type === 'sponsor'}
+							<span class="text-sm font-extrabold tracking-widest text-white leading-none"
+								>{item.text}</span
+							>
+							<span class="text-amber-400 font-black text-sm leading-none">★</span>
+						{:else if item.type === 'aviso'}
+							<span
+								class="h-5 px-2 rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+								>AVISO</span
+							>
+							<span class="text-xs font-bold text-neutral-200 leading-none">{item.text}</span>
+							<span class="text-blue-400 text-xs leading-none">●</span>
+						{:else if item.type === 'advertencia'}
+							<span
+								class="h-5 px-2 rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+								>ATENCIÓN</span
+							>
+							<span class="text-xs font-bold text-amber-200 leading-none">{item.text}</span>
+							<span class="text-amber-400 text-xs leading-none">▲</span>
+						{:else}
+							<span class="text-xs text-neutral-300 leading-none">{item.text}</span>
+							<span class="text-neutral-500 text-xs leading-none">◆</span>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else}
+			{#each liveItems as live (live.instanceId)}
+				<div
+					bind:this={live.el}
+					class="absolute top-0 bottom-0 flex items-center will-change-transform"
+					style="transform: translate3d({live.x}px, 0, 0);"
+				>
+					<div
+						class="flex items-center gap-3 font-mono text-sm uppercase leading-none whitespace-nowrap shrink-0"
+					>
+						{#if live.item.logoUrl}
+							<div class="h-6 max-w-[100px] min-w-[28px] flex items-center justify-center shrink-0">
+								<img
+									src={live.item.logoUrl}
+									alt=""
+									class="h-6 max-w-[100px] w-auto object-contain shrink-0 smooth-logo bg-transparent"
+								/>
+							</div>
+						{/if}
 
-            {#if b.item.type === 'sponsor'}
-              <span class="text-sm font-extrabold tracking-widest text-white">{b.item.text}</span>
-              <span class="text-amber-400 font-black">★</span>
-            {:else if b.item.type === 'aviso'}
-              <span class="px-2 py-0.5 text-xs rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex-shrink-0 leading-normal">AVISO</span>
-              <span class="text-xs font-bold text-neutral-200">{b.item.text}</span>
-              <span class="text-blue-400">●</span>
-            {:else if b.item.type === 'advertencia'}
-              <span class="px-2 py-0.5 text-xs rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex-shrink-0 leading-normal">ATENCIÓN</span>
-              <span class="text-xs font-bold text-amber-200">{b.item.text}</span>
-              <span class="text-amber-400">▲</span>
-            {:else}
-              <span class="text-xs text-neutral-300">{b.item.text}</span>
-              <span class="text-neutral-500">◆</span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-  </div>
+						{#if live.item.type === 'sponsor'}
+							<span class="text-sm font-extrabold tracking-widest text-white leading-none"
+								>{live.item.text}</span
+							>
+							<span class="text-amber-400 font-black text-sm leading-none">★</span>
+						{:else if live.item.type === 'aviso'}
+							<span
+								class="h-5 px-2 rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+								>AVISO</span
+							>
+							<span class="text-xs font-bold text-neutral-200 leading-none">{live.item.text}</span>
+							<span class="text-blue-400 text-xs leading-none">●</span>
+						{:else if live.item.type === 'advertencia'}
+							<span
+								class="h-5 px-2 rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+								>ATENCIÓN</span
+							>
+							<span class="text-xs font-bold text-amber-200 leading-none">{live.item.text}</span>
+							<span class="text-amber-400 text-xs leading-none">▲</span>
+						{:else}
+							<span class="text-xs text-neutral-300 leading-none">{live.item.text}</span>
+							<span class="text-neutral-500 text-xs leading-none">◆</span>
+						{/if}
+					</div>
+				</div>
+			{/each}
+		{/if}
+	</div>
 </footer>
+
+<style>
+	.ticker-mask {
+		isolation: isolate;
+		mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+		-webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+	}
+
+	.smooth-logo {
+		transform: translateZ(0);
+		backface-visibility: hidden;
+		-webkit-backface-visibility: hidden;
+		filter: blur(0px);
+	}
+</style>

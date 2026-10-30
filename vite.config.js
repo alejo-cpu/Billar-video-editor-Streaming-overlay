@@ -2,23 +2,23 @@ import { defineConfig } from 'vite';
 import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
-  plugins: [
-    svelte({
-      configFile: false,
-      preprocess: [vitePreprocess()]
-    })
-  ],
-  server: {
-    host: true,
-    port: 5173,
-    hmr: {
-      clientPort: 5173
-    },
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true
-      }
-    }
-  }
+	plugins: [
+		svelte({
+			configFile: false,
+			preprocess: [vitePreprocess()]
+		})
+	],
+	server: {
+		host: true,
+		port: 5173,
+		hmr: {
+			clientPort: 5173
+		},
+		proxy: {
+			'/api': {
+				target: 'http://localhost:3001',
+				changeOrigin: true
+			}
+		}
+	}
 });
