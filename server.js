@@ -17,7 +17,6 @@ if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(PROJECTS_BASE_DIR)) fs.mkdirSync(PROJECTS_BASE_DIR, { recursive: true });
 
-// Limpieza preventiva de temporales
 try {
 	const now = Date.now();
 	fs.readdirSync(UPLOADS_DIR).forEach((file) => {
@@ -30,7 +29,6 @@ try {
 	});
 } catch (e) {}
 
-// Normalización lingüística: elimina tildes y diacríticos (Efrén -> Efren)
 function cleanProjectName(str) {
 	if (!str) return 'partida';
 	return str
@@ -264,6 +262,7 @@ function runFFmpegRender(payload, wsClient) {
 	filterComplex.push(`[0:v]scale=1920:1080,setsar=1[v_base]`);
 	let currentVideoOutput = 'v_base';
 
+	// 1. MARCADOR SÓLIDO, FIRME Y TOTALMENTE ESTÁTICO (CERO SACUDIDAS DE MARCO)
 	if (hudSnapshots && hudSnapshots.length > 0) {
 		hudSnapshots.forEach((snap, idx) => {
 			const base64Data = snap.dataUrl.replace(/^data:image\/png;base64,/, '');
@@ -277,14 +276,18 @@ function runFFmpegRender(payload, wsClient) {
 			const nextOut = `v_hud_${idx}`;
 
 			const hudPosY = Math.round(12 * hudScale);
+			const tStart = Math.max(0, snap.start);
+			const tEnd = Math.min(safeDuration, snap.end);
+
 			filterComplex.push(`[${snapIdx}:v]scale=trunc(iw*${hudScale}/4)*2:-2[${scaledOut}]`);
 			filterComplex.push(
-				`[${currentVideoOutput}][${scaledOut}]overlay=x=(W-w)/2:y=${hudPosY}:eof_action=pass:enable='between(t,${Math.max(0, snap.start).toFixed(2)},${Math.min(safeDuration, snap.end).toFixed(2)})'[${nextOut}]`
+				`[${currentVideoOutput}][${scaledOut}]overlay=x=(W-w)/2:y=${hudPosY}:eof_action=pass:enable='between(t,${tStart.toFixed(2)},${tEnd.toFixed(2)})'[${nextOut}]`
 			);
 			currentVideoOutput = nextOut;
 		});
 	}
 
+	// 2. CINTA: DISTINGUIENDO VISIBILIDAD (SUBIR/BAJAR) DE CAMBIO DE MARCAS (DESVANECERSE EN SU SITIO)
 	if (tickerSnapshots && tickerSnapshots.length > 0) {
 		const barH = Math.max(30, Math.round(56 * tickerScale));
 
@@ -298,31 +301,66 @@ function runFFmpegRender(payload, wsClient) {
 
 			ffmpegArgs.push('-loop', '1', '-t', `${safeDuration}`, '-i', tickPath);
 			const tickInputIdx = inputIdx++;
-			const tStart = Math.max(0, tick.start).toFixed(2);
-			const tEnd = Math.min(safeDuration, tick.end).toFixed(2);
+			const tStart = Math.max(0, tick.start);
+			const tEnd = Math.min(safeDuration, tick.end);
+			const span = tEnd - tStart;
 
-			const barBg = `v_bar_${idx}`;
+			const isVisibilityTransition = tick.transitionType === 'visibility';
+
 			const tickScaleA = `v_tick_a_${idx}`;
 			const tickScaleB = `v_tick_b_${idx}`;
-			const tickMid = `v_tick_mid_${idx}`;
+			const tickBg = `v_tick_bg_${idx}`;
+			const tickCompMid = `v_tick_mid_${idx}`;
+			const tickStrip = `v_tick_strip_${idx}`;
 			const nextOut = `v_tick_${idx}`;
 
-			filterComplex.push(
-				`[${currentVideoOutput}]drawbox=x=0:y=ih-${barH}:w=iw:h=${barH}:color=black@0.92:t=fill:enable='between(t,${tStart},${tEnd})'[${barBg}]`
-			);
-			filterComplex.push(
-				`[${tickInputIdx}:v]scale=-1:${barH},split=2[${tickScaleA}][${tickScaleB}]`
-			);
-			filterComplex.push(
-				`[${barBg}][${tickScaleA}]overlay=x='-mod(t*75\\,w)':y=H-${barH}:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${tickMid}]`
-			);
-			filterComplex.push(
-				`[${tickMid}][${tickScaleB}]overlay=x='w-mod(t*75\\,w)':y=H-${barH}:eof_action=pass:enable='between(t,${tStart},${tEnd})'[${nextOut}]`
-			);
+			if (isVisibilityTransition) {
+				// CASO A: OCULTAR O MOSTRAR (LA BARRA COMPLETA BAJA Y SUBE)
+				const animDur = span > 0.8 ? 0.35 : Math.max(0.1, span / 3);
+				const tInEnd = (tStart + animDur).toFixed(2);
+				const tOutStart = (tEnd - animDur).toFixed(2);
+
+				const yTickerExpr = `if(lt(t\\,${tInEnd})\\, H-${barH}*(t-${tStart.toFixed(2)})/${animDur.toFixed(2)}\\, if(gt(t\\,${tOutStart})\\, (H-${barH})+${barH}*(t-${tOutStart})/${animDur.toFixed(2)}\\, H-${barH}))`;
+
+				filterComplex.push(`color=c=black@0.92:s=1920x${barH}:d=${safeDuration}[${tickBg}]`);
+				filterComplex.push(`[${tickInputIdx}:v]scale=-1:${barH},split=2[${tickScaleA}][${tickScaleB}]`);
+				filterComplex.push(
+					`[${tickBg}][${tickScaleA}]overlay=x='-mod(t*75\\,w)':y=0:eof_action=pass[${tickCompMid}]`
+				);
+				filterComplex.push(
+					`[${tickCompMid}][${tickScaleB}]overlay=x='w-mod(t*75\\,w)':y=0:eof_action=pass[${tickStrip}]`
+				);
+				filterComplex.push(
+					`[${currentVideoOutput}][${tickStrip}]overlay=x=0:y='${yTickerExpr}':eof_action=pass:enable='between(t,${tStart.toFixed(2)},${tEnd.toFixed(2)})'[${nextOut}]`
+				);
+			} else {
+				// CASO B: CAMBIO DE ELEMENTOS (LA BARRA SE QUEDA FIJA ABAJO Y LAS MARCAS SE DESVANECEN EN SU SITIO)
+				const fadeDur = span > 0.8 ? 0.3 : Math.max(0.1, span / 3);
+				const fadeOutStart = (tEnd - fadeDur).toFixed(2);
+				const tickFaded = `v_tick_fade_${idx}`;
+
+				filterComplex.push(`color=c=black@0.92:s=1920x${barH}:d=${safeDuration}[${tickBg}]`);
+				filterComplex.push(`[${tickInputIdx}:v]scale=-1:${barH},split=2[${tickScaleA}][${tickScaleB}]`);
+				filterComplex.push(
+					`[${tickBg}][${tickScaleA}]overlay=x='-mod(t*75\\,w)':y=0:eof_action=pass[${tickCompMid}]`
+				);
+				filterComplex.push(
+					`[${tickCompMid}][${tickScaleB}]overlay=x='w-mod(t*75\\,w)':y=0:eof_action=pass[${tickStrip}]`
+				);
+				// Aplicamos desvanecimiento alfa en su sitio idéntico a Studio
+				filterComplex.push(
+					`[${tickStrip}]fade=t=in:st=${tStart.toFixed(2)}:d=${fadeDur.toFixed(2)}:alpha=1,fade=t=out:st=${fadeOutStart}:d=${fadeDur.toFixed(2)}:alpha=1[${tickFaded}]`
+				);
+				filterComplex.push(
+					`[${currentVideoOutput}][${tickFaded}]overlay=x=0:y=H-${barH}:eof_action=pass:enable='between(t,${tStart.toFixed(2)},${tEnd.toFixed(2)})'[${nextOut}]`
+				);
+			}
+
 			currentVideoOutput = nextOut;
 		});
 	}
 
+	// 3. REACCIONES CON SECUENCIA DE FRAMES ANIMADOS REALES
 	const effectEvents = (events || []).filter((e) => e.actionType === 'effect');
 	effectEvents.forEach((ev, idx) => {
 		const effectName = ev.payload.effect;
@@ -388,16 +426,17 @@ function runFFmpegRender(payload, wsClient) {
 	});
 
 	let audioInputs = [];
-	let hasVideoAudio = false;
-	try {
-		const probe = execSync(`"${FFMPEG_BIN}" -i "${inputVideoPath}"`, {
-			stdio: ['pipe', 'pipe', 'ignore']
-		}).toString();
-		hasVideoAudio = /Stream #.*Audio:/.test(probe);
-	} catch (e) {
-		const errStr = e.stderr?.toString() || e.stdout?.toString() || '';
-		hasVideoAudio = /Stream #.*Audio:/.test(errStr);
-	}
+	const hasVideoAudio = (() => {
+		try {
+			const probe = execSync(`"${FFMPEG_BIN}" -i "${inputVideoPath}"`, {
+				stdio: ['pipe', 'pipe', 'ignore']
+			}).toString();
+			return /Stream #.*Audio:/.test(probe);
+		} catch (e) {
+			const errStr = e.stderr?.toString() || e.stdout?.toString() || '';
+			return Boolean(errStr && /Stream #.*Audio:/.test(errStr));
+		}
+	})();
 
 	const vAudioMuted = videoAudioSettings?.muted === true;
 	const vAudioVolume = Math.max(0, Math.min(1.0, parseFloat(videoAudioSettings?.volume ?? 1)));

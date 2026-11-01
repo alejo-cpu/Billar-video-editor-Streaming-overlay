@@ -21,13 +21,17 @@
 
 	$: storeItemsJson = JSON.stringify($matchStore?.ticker?.items || []);
 
-	// Sincronizacion automatica con el servidor al conectar el movil
-	$: if (storeItemsJson !== lastStoreJson) {
-		lastStoreJson = storeItemsJson;
-		if (!isDirty) {
-			stagedItems = JSON.parse(storeItemsJson);
+	function syncStoreJson(json) {
+		if (json !== lastStoreJson) {
+			lastStoreJson = json;
+			if (!isDirty) {
+				stagedItems = JSON.parse(json);
+			}
 		}
 	}
+
+	// Sincronizacion automatica con el servidor al conectar el movil
+	$: syncStoreJson(storeItemsJson);
 
 	function syncWithStore() {
 		stagedItems = JSON.parse(JSON.stringify($matchStore?.ticker?.items || []));

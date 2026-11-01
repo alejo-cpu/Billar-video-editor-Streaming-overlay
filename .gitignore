@@ -56,3 +56,6 @@ desktop.ini
 *.sln
 *.sw?
 *~
+
+install.log
+billiard-app-windows/

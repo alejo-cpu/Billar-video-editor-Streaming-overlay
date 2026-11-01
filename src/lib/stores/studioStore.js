@@ -27,7 +27,7 @@ const initialStudioState = {
 };
 
 function createStudioStore() {
-	const { subscribe, set, update } = writable({ ...initialStudioState });
+	const { subscribe, update } = writable({ ...initialStudioState });
 
 	let undoHistory = [];
 	let historyIndex = -1;

@@ -6,12 +6,14 @@
 	let prevValue = value;
 	let direction = 1;
 
-	$: {
-		if (value !== prevValue) {
-			direction = value > prevValue ? 1 : -1;
-			prevValue = value;
+	function updateRoll(val) {
+		if (val !== prevValue) {
+			direction = val > prevValue ? 1 : -1;
+			prevValue = val;
 		}
 	}
+
+	$: updateRoll(value);
 </script>
 
 <div

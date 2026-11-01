@@ -1,5 +1,8 @@
 <script>
+	import NumberRoll from '../overlay/NumberRoll.svelte';
+
 	export let matchState = {};
+	export let isCapturing = false;
 
 	$: p1 = matchState.p1 || { name: 'JUGADOR 1', balls: 0, games: 0, pocket: '', avatar: '' };
 	$: p2 = matchState.p2 || { name: 'JUGADOR 2', balls: 0, games: 0, pocket: '', avatar: '' };
@@ -63,16 +66,28 @@
 									? 'bg-[#8c5205]'
 									: 'bg-neutral-700'} shrink-0"
 						></div>
-						<span
-							class="font-mono text-base font-black leading-none text-center min-w-[16px] {p1.balls <
-							0
-								? 'text-rose-500'
-								: isP1Active
-									? 'text-[#fbc02d]'
-									: 'text-white'}"
-						>
-							{p1.balls}
-						</span>
+						<div class="flex items-center justify-center leading-none min-w-[16px]">
+							{#if isCapturing}
+								<span
+									class="font-mono text-base font-black leading-none text-center {p1.balls < 0
+										? 'text-rose-500'
+										: isP1Active
+											? 'text-[#fbc02d]'
+											: 'text-white'}"
+								>
+									{p1.balls}
+								</span>
+							{:else}
+								<NumberRoll
+									value={p1.balls}
+									customClass="text-base font-black {p1.balls < 0
+										? 'text-rose-500'
+										: isP1Active
+											? 'text-[#fbc02d]'
+											: 'text-white'}"
+								/>
+							{/if}
+						</div>
 					</div>
 				</div>
 
@@ -114,9 +129,15 @@
 					</div>
 
 					<div class="flex items-center gap-1.5 font-mono my-0.5 leading-none">
-						<span class="text-2xl font-black text-[#fbc02d] leading-none">{p1.games}</span>
-						<span class="text-lg font-bold text-neutral-500 leading-none pb-0.5">:</span>
-						<span class="text-2xl font-black text-[#fbc02d] leading-none">{p2.games}</span>
+						{#if isCapturing}
+							<span class="text-2xl font-black text-[#fbc02d] leading-none">{p1.games}</span>
+							<span class="text-lg font-bold text-neutral-500 leading-none pb-0.5">:</span>
+							<span class="text-2xl font-black text-[#fbc02d] leading-none">{p2.games}</span>
+						{:else}
+							<NumberRoll value={p1.games} customClass="text-2xl font-black text-[#fbc02d]" />
+							<span class="text-lg font-bold text-neutral-500 leading-none pb-0.5">:</span>
+							<NumberRoll value={p2.games} customClass="text-2xl font-black text-[#fbc02d]" />
+						{/if}
 					</div>
 
 					<div
@@ -177,16 +198,28 @@
 									? 'bg-[#8c5205]'
 									: 'bg-neutral-700'} shrink-0"
 						></div>
-						<span
-							class="font-mono text-base font-black leading-none text-center min-w-[16px] {p2.balls <
-							0
-								? 'text-rose-500'
-								: isP2Active
-									? 'text-[#fbc02d]'
-									: 'text-white'}"
-						>
-							{p2.balls}
-						</span>
+						<div class="flex items-center justify-center leading-none min-w-[16px]">
+							{#if isCapturing}
+								<span
+									class="font-mono text-base font-black leading-none text-center {p2.balls < 0
+										? 'text-rose-500'
+										: isP2Active
+											? 'text-[#fbc02d]'
+											: 'text-white'}"
+								>
+									{p2.balls}
+								</span>
+							{:else}
+								<NumberRoll
+									value={p2.balls}
+									customClass="text-base font-black {p2.balls < 0
+										? 'text-rose-500'
+										: isP2Active
+											? 'text-[#fbc02d]'
+											: 'text-white'}"
+								/>
+							{/if}
+						</div>
 					</div>
 
 					<span

@@ -1,5 +1,4 @@
 <script>
-	import { onMount } from 'svelte';
 	import OverlayView from './lib/components/overlay/OverlayView.svelte';
 	import ControlView from './lib/components/control/ControlView.svelte';
 	import StudioView from './lib/components/studio/StudioView.svelte';

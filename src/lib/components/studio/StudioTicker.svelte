@@ -9,6 +9,7 @@
 
 	$: activeQueue = (items || []).filter((i) => i.active);
 
+	// Bloque con repetición suficiente para superar cualquier resolución
 	$: loopBlock = (() => {
 		if (activeQueue.length === 0) return [];
 		let list = [...activeQueue];
@@ -19,15 +20,12 @@
 	})();
 
 	const SPEED = 85;
-	const GAP = 42;
 
-	let containerEl;
-	let containerWidth = 1920;
-	let liveItems = [];
-	let queueIndex = 0;
-	let nextInstanceId = 1;
+	let segmentEl;
+	let segmentWidth = 1920;
 	let animId = null;
 	let lastTime = null;
+	let offset = 0;
 	let lastSignature = '';
 	let isBreathing = false;
 
@@ -35,65 +33,27 @@
 		.map((i) => (i.id || i.text) + ':' + (i.active ? '1' : '0'))
 		.join('|');
 
-	$: {
-		if (activeSignature !== lastSignature && visible) {
-			lastSignature = activeSignature;
+	function handleSignatureChange(sig, isVisible) {
+		if (sig !== lastSignature && isVisible) {
+			lastSignature = sig;
 			triggerBreathingTransition();
 		}
 	}
 
+	$: handleSignatureChange(activeSignature, visible);
+
 	function triggerBreathingTransition() {
 		isBreathing = true;
 		setTimeout(() => {
-			resetConveyor();
+			measureSegment();
 			isBreathing = false;
-		}, 280);
+		}, 260);
 	}
 
-	function spawnItem(startX) {
-		if (activeQueue.length === 0) return;
-		const data = activeQueue[queueIndex % activeQueue.length];
-		queueIndex++;
-
-		liveItems = [
-			...liveItems,
-			{
-				instanceId: nextInstanceId++,
-				item: data,
-				x: startX,
-				width: 0,
-				el: null
-			}
-		];
-	}
-
-	function resetConveyor() {
-		liveItems = [];
-		queueIndex = 0;
-		if (activeQueue.length === 0) return;
-
-		if (containerEl) {
-			containerWidth = containerEl.clientWidth || 1920;
-		}
-
-		let curX = 0;
-		let count = 0;
-		while (curX < containerWidth && count < Math.max(8, activeQueue.length * 3)) {
-			const data = activeQueue[queueIndex % activeQueue.length];
-			queueIndex++;
-			const baseEstimate = 140;
-			liveItems = [
-				...liveItems,
-				{
-					instanceId: nextInstanceId++,
-					item: data,
-					x: curX,
-					width: baseEstimate,
-					el: null
-				}
-			];
-			curX += baseEstimate + GAP;
-			count++;
+	function measureSegment() {
+		if (segmentEl) {
+			const w = segmentEl.offsetWidth;
+			if (w > 0) segmentWidth = w;
 		}
 	}
 
@@ -107,69 +67,27 @@
 			return;
 		}
 
-		if (containerEl) {
-			containerWidth = containerEl.clientWidth || 1920;
-		}
+		measureSegment();
 
-		if (!isFrozen) {
-			for (let i = 0; i < liveItems.length; i++) {
-				const live = liveItems[i];
-				if (live.el && (!live.width || live.width <= 140)) {
-					const measuredW = live.el.offsetWidth;
-					if (measuredW > 0) live.width = measuredW;
-				}
-				if (isPlaying) {
-					live.x -= SPEED * dt;
-				}
-				if (live.el) {
-					live.el.style.transform = `translate3d(${live.x}px, 0, 0)`;
-				}
-			}
-
-			if (activeQueue.length > 0) {
-				if (liveItems.length === 0) {
-					spawnItem(containerWidth);
-				} else {
-					const last = liveItems[liveItems.length - 1];
-					if (last && last.el && (!last.width || last.width <= 140)) {
-						const mw = last.el.offsetWidth;
-						if (mw > 0) last.width = mw;
-					}
-					if (last && last.width > 0) {
-						const nextSpawnX = last.x + last.width + GAP;
-						if (nextSpawnX <= containerWidth) {
-							spawnItem(nextSpawnX);
-						}
-					}
-				}
-			}
-
-			if (liveItems.length > 0 && liveItems[0].width > 0 && isPlaying) {
-				if (liveItems[0].x + liveItems[0].width < -40) {
-					liveItems = liveItems.slice(1);
-				}
+		if (isPlaying && !isFrozen && segmentWidth > 0) {
+			offset -= SPEED * dt;
+			if (offset <= -segmentWidth) {
+				offset += segmentWidth;
 			}
 		}
 
 		animId = requestAnimationFrame(updateConveyor);
 	}
 
-	function handleResize() {
-		if (containerEl) {
-			containerWidth = containerEl.clientWidth || 1920;
-		}
-	}
-
 	onMount(() => {
-		handleResize();
-		window.addEventListener('resize', handleResize);
-		resetConveyor();
+		measureSegment();
+		window.addEventListener('resize', measureSegment);
 		animId = requestAnimationFrame(updateConveyor);
 	});
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
-			window.removeEventListener('resize', handleResize);
+			window.removeEventListener('resize', measureSegment);
 			if (animId) cancelAnimationFrame(animId);
 		}
 	});
@@ -185,14 +103,13 @@
   "
 >
 	<div
-		bind:this={containerEl}
 		class="flex-1 overflow-hidden relative ticker-mask min-w-0 h-full flex items-center transition-opacity duration-300 {isBreathing
 			? 'opacity-0'
 			: 'opacity-100'}"
 	>
 		{#if isFrozen}
 			<div class="studio-marquee-segment flex items-center w-max h-full">
-				{#each loopBlock as item}
+				{#each loopBlock as item, idx (`${item.id || item.text}-${idx}`)}
 					<div class="flex items-center gap-3 pr-10 font-mono text-sm uppercase flex-shrink-0">
 						{#if item.logoUrl}
 							<div class="h-6 max-w-[100px] min-w-[28px] flex items-center justify-center shrink-0">
@@ -230,51 +147,91 @@
 				{/each}
 			</div>
 		{:else}
-			{#each liveItems as live (live.instanceId)}
-				<div
-					bind:this={live.el}
-					class="absolute top-0 bottom-0 flex items-center will-change-transform"
-					style="transform: translate3d({live.x}px, 0, 0);"
-				>
-					<div
-						class="flex items-center gap-3 font-mono text-sm uppercase leading-none whitespace-nowrap shrink-0"
-					>
-						{#if live.item.logoUrl}
-							<div class="h-6 max-w-[100px] min-w-[28px] flex items-center justify-center shrink-0">
-								<img
-									src={live.item.logoUrl}
-									alt=""
-									class="h-6 max-w-[100px] w-auto object-contain shrink-0 smooth-logo bg-transparent"
-								/>
-							</div>
-						{/if}
-
-						{#if live.item.type === 'sponsor'}
-							<span class="text-sm font-extrabold tracking-widest text-white leading-none"
-								>{live.item.text}</span
-							>
-							<span class="text-amber-400 font-black text-sm leading-none">★</span>
-						{:else if live.item.type === 'aviso'}
-							<span
-								class="h-5 px-2 rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
-								>AVISO</span
-							>
-							<span class="text-xs font-bold text-neutral-200 leading-none">{live.item.text}</span>
-							<span class="text-blue-400 text-xs leading-none">●</span>
-						{:else if live.item.type === 'advertencia'}
-							<span
-								class="h-5 px-2 rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
-								>ATENCIÓN</span
-							>
-							<span class="text-xs font-bold text-amber-200 leading-none">{live.item.text}</span>
-							<span class="text-amber-400 text-xs leading-none">▲</span>
-						{:else}
-							<span class="text-xs text-neutral-300 leading-none">{live.item.text}</span>
-							<span class="text-neutral-500 text-xs leading-none">◆</span>
-						{/if}
-					</div>
+			<!-- Carrusel continuo de doble segmento con costura exacta sin padding duplicado -->
+			<div
+				class="absolute top-0 bottom-0 flex items-center will-change-transform"
+				style="transform: translate3d({offset}px, 0, 0);"
+			>
+				<!-- Segmento A -->
+				<div bind:this={segmentEl} class="flex items-center shrink-0">
+					{#each loopBlock as item, idx (`segA-${item.id || item.text}-${idx}`)}
+						<div class="flex items-center gap-3 pr-10 font-mono text-sm uppercase flex-shrink-0">
+							{#if item.logoUrl}
+								<div class="h-6 max-w-[100px] min-w-[28px] flex items-center justify-center shrink-0">
+									<img
+										src={item.logoUrl}
+										alt=""
+										class="h-6 max-w-[100px] w-auto object-contain shrink-0 smooth-logo bg-transparent"
+									/>
+								</div>
+							{/if}
+							{#if item.type === 'sponsor'}
+								<span class="text-sm font-extrabold tracking-widest text-white leading-none"
+									>{item.text}</span
+								>
+								<span class="text-amber-400 font-black text-sm leading-none">★</span>
+							{:else if item.type === 'aviso'}
+								<span
+									class="h-5 px-2 rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+									>AVISO</span
+								>
+								<span class="text-xs font-bold text-neutral-200 leading-none">{item.text}</span>
+								<span class="text-blue-400 text-xs leading-none">●</span>
+							{:else if item.type === 'advertencia'}
+								<span
+									class="h-5 px-2 rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+									>ATENCIÓN</span
+								>
+								<span class="text-xs font-bold text-amber-200 leading-none">{item.text}</span>
+								<span class="text-amber-400 text-xs leading-none">▲</span>
+							{:else}
+								<span class="text-xs text-neutral-300 leading-none">{item.text}</span>
+								<span class="text-neutral-500 text-xs leading-none">◆</span>
+							{/if}
+						</div>
+					{/each}
 				</div>
-			{/each}
+
+				<!-- Segmento B (gemelo contiguo con la misma separación de 40px) -->
+				<div class="flex items-center shrink-0" aria-hidden="true">
+					{#each loopBlock as item, idx (`segB-${item.id || item.text}-${idx}`)}
+						<div class="flex items-center gap-3 pr-10 font-mono text-sm uppercase flex-shrink-0">
+							{#if item.logoUrl}
+								<div class="h-6 max-w-[100px] min-w-[28px] flex items-center justify-center shrink-0">
+									<img
+										src={item.logoUrl}
+										alt=""
+										class="h-6 max-w-[100px] w-auto object-contain shrink-0 smooth-logo bg-transparent"
+									/>
+								</div>
+							{/if}
+							{#if item.type === 'sponsor'}
+								<span class="text-sm font-extrabold tracking-widest text-white leading-none"
+									>{item.text}</span
+								>
+								<span class="text-amber-400 font-black text-sm leading-none">★</span>
+							{:else if item.type === 'aviso'}
+								<span
+									class="h-5 px-2 rounded bg-blue-950/90 border border-blue-500/50 text-blue-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+									>AVISO</span
+								>
+								<span class="text-xs font-bold text-neutral-200 leading-none">{item.text}</span>
+								<span class="text-blue-400 text-xs leading-none">●</span>
+							{:else if item.type === 'advertencia'}
+								<span
+									class="h-5 px-2 rounded bg-amber-950/90 border border-amber-500/50 text-amber-300 font-sans font-bold flex items-center justify-center text-xs leading-none shrink-0"
+									>ATENCIÓN</span
+								>
+								<span class="text-xs font-bold text-amber-200 leading-none">{item.text}</span>
+								<span class="text-amber-400 text-xs leading-none">▲</span>
+							{:else}
+								<span class="text-xs text-neutral-300 leading-none">{item.text}</span>
+								<span class="text-neutral-500 text-xs leading-none">◆</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</div>
 		{/if}
 	</div>
 </footer>

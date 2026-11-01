@@ -1,5 +1,5 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { studioStore } from '../../stores/studioStore.js';
 	import StudioHeader from './StudioHeader.svelte';
 	import StudioScoreboard from './StudioScoreboard.svelte';
@@ -9,7 +9,6 @@
 	import ImageCropModal from '../control/ImageCropModal.svelte';
 	import { liveEffect } from '../../stores/matchStore.js';
 	import * as htmlToImage from 'html-to-image';
-	import confetti from 'canvas-confetti';
 	import {
 		Play,
 		Pause,
@@ -17,16 +16,12 @@
 		Trash2,
 		Volume2,
 		VolumeX,
-		Clock,
-		Music,
-		Sparkles,
 		Maximize,
 		Minimize,
 		ToggleLeft,
 		ToggleRight,
 		UserCheck,
 		ArrowLeftRight,
-		Sliders,
 		Eye,
 		EyeOff,
 		X,
@@ -82,6 +77,7 @@
 	let isKeyframesExpanded = false;
 
 	let isTickerFrozen = false;
+	let isCapturingHud = false;
 	let autoSaveTimer = null;
 	let saveFeedbackMessage = '';
 	let renderErrorData = null;
@@ -92,6 +88,14 @@
 			.normalize('NFD')
 			.replace(/[\u0300-\u036f]/g, '')
 			.replace(/[^a-zA-Z0-9_-]/g, '_');
+	}
+
+	function parseTimeToSeconds(val, fallback = 0) {
+		if (!val) return fallback;
+		const parts = val.split(':').map(Number);
+		if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+		if (parts.length === 2) return parts[0] * 60 + parts[1];
+		return Number(val) || fallback;
 	}
 
 	/* ==================== CONTROL DE AUDIO ==================== */
@@ -195,7 +199,6 @@
 		}));
 	}
 
-	// Sincronización inteligente que solo ocurre al cruzar una marca real
 	let lastTimelineCheckedTime = 0;
 	$: {
 		if (isPlaying && Math.abs(currentTime - lastTimelineCheckedTime) > 0.1) {
@@ -1071,6 +1074,10 @@
 			);
 			const uniqueScoreTimes = [...new Set(sortedScoreTimes)];
 
+			// Captura estática limpia con números fijados y sin transiciones a medio camino
+			isCapturingHud = true;
+			await new Promise((r) => setTimeout(r, 60));
+
 			for (let i = 0; i < uniqueScoreTimes.length - 1; i++) {
 				const tStart = uniqueScoreTimes[i];
 				const tEnd = uniqueScoreTimes[i + 1];
@@ -1080,6 +1087,7 @@
 				const dataUrl = await captureCleanPng(hudCard, { pixelRatio: 2, skipFonts: true });
 				hudSnapshots.push({ start: tStart, end: tEnd, dataUrl });
 			}
+			isCapturingHud = false;
 
 			const tickerEvents = keyframes.filter(
 				(k) => k.actionType === 'setTickerItems' || k.actionType === 'toggleTicker'
@@ -1098,6 +1106,12 @@
 				seek(tStart + 0.02);
 				await new Promise((r) => setTimeout(r, 60));
 
+				// Clasificamos si el cambio en tStart es de visibilidad (ocultar/mostrar) o de marcas (desvanecer)
+				const matchedEvent = keyframes.find(
+					(k) => Math.abs(k.time - tStart) < 0.25 && (k.actionType === 'toggleTicker' || k.actionType === 'setTickerItems')
+				);
+				const transitionType = matchedEvent?.actionType === 'toggleTicker' || i === 0 ? 'visibility' : 'fade';
+
 				const tickSegment = videoContainer.querySelector('.studio-marquee-segment');
 				if (
 					activeState.ticker.visible &&
@@ -1106,7 +1120,7 @@
 				) {
 					try {
 						const dataUrl = await captureCleanPng(tickSegment, { pixelRatio: 1, skipFonts: true });
-						tickerSnapshots.push({ start: tStart, end: tEnd, visible: true, dataUrl });
+						tickerSnapshots.push({ start: tStart, end: tEnd, visible: true, dataUrl, transitionType });
 					} catch (e) {}
 				}
 			}
@@ -1178,6 +1192,7 @@
 			};
 		} catch (err) {
 			isTickerFrozen = false;
+			isCapturingHud = false;
 			isUploadingForRender = false;
 			renderErrorData = {
 				title: 'Error inesperado al preparar render',
@@ -1223,7 +1238,7 @@
 
 	<main class="flex-1 grid grid-cols-[1fr_400px] gap-4 p-4 overflow-hidden">
 		<div class="flex flex-col gap-3 min-w-0">
-			<!-- REPRODUCTOR DE VIDEO -->
+			<!-- REPRODUCTOR DE VIDEO CON EVENTOS on:ended, on:pause y on:play -->
 			<div
 				bind:this={videoContainer}
 				tabindex="0"
@@ -1250,6 +1265,16 @@
 						src={videoUrl}
 						class="w-full h-full object-cover"
 						on:timeupdate={() => studioStore.setTime(videoElement.currentTime)}
+						on:ended={() => {
+							studioStore.setIsPlaying(false);
+							if (bgAudioElement && !bgAudioElement.paused) bgAudioElement.pause();
+						}}
+						on:pause={() => {
+							if (!isSamplingTrack) studioStore.setIsPlaying(false);
+						}}
+						on:play={() => {
+							studioStore.setIsPlaying(true);
+						}}
 						on:loadedmetadata={() => {
 							studioStore.setDuration(videoElement.duration);
 							updateVideoAspect();
@@ -1269,7 +1294,7 @@
               transform-origin: 0 0;
             "
 					>
-						<StudioScoreboard matchState={activeState} />
+						<StudioScoreboard matchState={activeState} isCapturing={isCapturingHud} />
 						<EffectsLayer customCanvas={confettiCanvas} />
 						<StudioTicker
 							items={activeState.ticker.items}
@@ -1562,7 +1587,7 @@
 							<div
 								class="grid grid-cols-4 gap-1.5 mt-2.5 p-1.5 bg-[#08090d] rounded-xl border border-white/5"
 							>
-								{#each EMOJI_REACTIONS as item}
+								{#each EMOJI_REACTIONS as item (item.key)}
 									<button
 										on:click={() => markEffect(item.key, 'p1')}
 										class="group/emo relative h-10 flex items-center justify-center rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-400 text-xl transition active:scale-90"
@@ -1671,7 +1696,7 @@
 							<div
 								class="grid grid-cols-4 gap-1.5 mt-2.5 p-1.5 bg-[#08090d] rounded-xl border border-white/5"
 							>
-								{#each EMOJI_REACTIONS as item}
+								{#each EMOJI_REACTIONS as item (item.key)}
 									<button
 										on:click={() => markEffect(item.key, 'p2')}
 										class="group/emo relative h-10 flex items-center justify-center rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-amber-400 text-xl transition active:scale-90"
@@ -1870,7 +1895,6 @@
 								</button>
 							</div>
 
-							<!-- Logo de marca limpio sin marcos oscuros -->
 							<div
 								class="flex items-center justify-between bg-black/40 p-2.5 rounded-xl border border-white/5 text-xs"
 							>
@@ -1943,7 +1967,6 @@
 							</div>
 						</div>
 
-						<!-- Lista de marcas en borrador -->
 						<div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
 							{#each stagedTickerItems as item (item.id)}
 								<div
@@ -2006,7 +2029,6 @@
 		<div
 			class="bg-[#0c0e15] border border-white/10 rounded-2xl p-4 flex flex-col gap-4 overflow-hidden shadow-xl"
 		>
-			<!-- 1. AUDIO ORIGINAL DEL VÍDEO -->
 			<div class="border-b border-white/10 pb-3 flex flex-col gap-2">
 				<div class="flex items-center justify-between">
 					<span class="text-xs font-mono font-bold text-neutral-300 flex items-center gap-1.5">
@@ -2044,7 +2066,6 @@
 				</div>
 			</div>
 
-			<!-- 2. PLAYLIST DE MÚSICA CON RANGO INICIO/FIN Y BOTÓN MEZCLAR -->
 			<div class="border-b border-white/10 pb-3 flex flex-col gap-2.5">
 				<div class="flex items-center justify-between">
 					<span class="text-xs font-mono font-bold text-neutral-300 flex items-center gap-1.5">
@@ -2119,12 +2140,7 @@
 									type="text"
 									value={formatTime(bgSettings.rangeStart || 0)}
 									on:change={(e) => {
-										const parts = e.target.value.split(':').map(Number);
-										let sec = 0;
-										if (parts.length === 3) sec = parts[0] * 3600 + parts[1] * 60 + parts[2];
-										else if (parts.length === 2) sec = parts[0] * 60 + parts[1];
-										else sec = Number(e.target.value) || 0;
-										bgSettings.rangeStart = Math.max(0, sec);
+										bgSettings.rangeStart = Math.max(0, parseTimeToSeconds(e.target.value, 0));
 										handleRangeChange();
 									}}
 									class="w-full bg-transparent text-amber-400 font-bold outline-none text-center"
@@ -2139,12 +2155,10 @@
 									type="text"
 									value={formatTime(bgSettings.rangeEnd || duration || 0)}
 									on:change={(e) => {
-										const parts = e.target.value.split(':').map(Number);
-										let sec = 0;
-										if (parts.length === 3) sec = parts[0] * 3600 + parts[1] * 60 + parts[2];
-										else if (parts.length === 2) sec = parts[0] * 60 + parts[1];
-										else sec = Number(e.target.value) || 0;
-										bgSettings.rangeEnd = Math.max(bgSettings.rangeStart || 0, sec);
+										bgSettings.rangeEnd = Math.max(
+											bgSettings.rangeStart || 0,
+											parseTimeToSeconds(e.target.value, duration || 0)
+										);
 										handleRangeChange();
 									}}
 									class="w-full bg-transparent text-amber-400 font-bold outline-none text-center"
@@ -2282,7 +2296,6 @@
 				{/if}
 			</div>
 
-			<!-- 3. REACCIONES CON AUDIO -->
 			<div class="flex items-center justify-between bg-black/30 p-2 rounded-xl text-xs">
 				<span class="text-neutral-400">Sonido en reacciones:</span>
 				<button
@@ -2295,7 +2308,6 @@
 				</button>
 			</div>
 
-			<!-- 4. MARCAS REGISTRADAS CON DESHACER / REHACER Y MODAL -->
 			<div class="flex items-center justify-between border-b border-white/5 pb-1">
 				<div class="flex items-center gap-2">
 					<span class="text-xs font-mono font-bold text-neutral-400"
@@ -2417,6 +2429,22 @@
 			{/if}
 		</div>
 	</main>
+
+	<!-- Inputs ocultos para carga de archivos de proyecto y video -->
+	<input
+		bind:this={projectFileInput}
+		type="file"
+		accept=".billiard,.json"
+		on:change={handleProjectFileLoad}
+		class="hidden"
+	/>
+	<input
+		bind:this={relinkFileInput}
+		type="file"
+		accept="video/*"
+		on:change={handleRelinkVideo}
+		class="hidden"
+	/>
 
 	<StudioModals
 		{showClearConfirmModal}
