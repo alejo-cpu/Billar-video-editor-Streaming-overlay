@@ -25,6 +25,7 @@
 	$: uiScale = $matchStore.uiScale || { hud: 1.0, ticker: 1.0 };
 	$: race = $matchStore.race || 'RACE TO 3';
 	$: modality = $matchStore.modality || 'ONE POCKET';
+	$: isEightBall = modality === 'BOLA 8';
 
 	let customSecondsInput = 30;
 	let showQrModal = false;
@@ -166,12 +167,21 @@
 					</button>
 				{/if}
 
-				<button
-					on:click={() => matchStore.swapPockets()}
-					class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-1.5 transition active:scale-95"
-				>
-					<ArrowLeftRight size={13} class="text-amber-400" /> Invertir (L ⇄ R)
-				</button>
+				{#if isEightBall}
+					<button
+						on:click={() => matchStore.swapGroups()}
+						class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-1.5 transition active:scale-95"
+					>
+						<ArrowLeftRight size={13} class="text-amber-400" /> Invertir (Solids ⇄ Stripes)
+					</button>
+				{:else}
+					<button
+						on:click={() => matchStore.swapPockets()}
+						class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-white/10 text-xs font-bold rounded-xl flex items-center gap-1.5 transition active:scale-95"
+					>
+						<ArrowLeftRight size={13} class="text-amber-400" /> Invertir (L ⇄ R)
+					</button>
+				{/if}
 			</div>
 
 			<!-- Configuración del juego -->

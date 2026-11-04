@@ -15,10 +15,23 @@
 	$: isP1Active = turns.enabled && turns.active === 'p1';
 	$: isP2Active = turns.enabled && turns.active === 'p2';
 
+	// El umbral se activa a partir de 15 caracteres (Intacto)
 	$: maxNameLength = Math.max((p1.name || '').trim().length, (p2.name || '').trim().length);
 	$: isShortMode = maxNameLength <= 6;
+	$: isLongMode = maxNameLength >= 15;
 
-	$: hudWidthClass = isShortMode ? 'w-[750px]' : 'w-[890px]';
+	// Anchuras sincronizadas exclusivamente con One Pocket (Intactas)
+	$: hudWidthClass = showAvatars
+		? isShortMode
+			? 'w-[820px]'
+			: isLongMode
+				? 'w-[1090px]'
+				: 'w-[970px]'
+		: isShortMode
+			? 'w-[720px]'
+			: isLongMode
+				? 'w-[980px]'
+				: 'w-[860px]';
 </script>
 
 <header
@@ -101,7 +114,7 @@
 				</div>
 
 				{#if showAvatars}
-					<div class="relative shrink-0 w-10 h-10 flex items-center justify-center">
+					<div class="relative shrink-0 w-11 h-11 flex items-center justify-center overflow-visible">
 						<img
 							alt={p1.name}
 							class="w-10 h-10 rounded-full object-cover bg-neutral-900
@@ -151,7 +164,7 @@
 			<!-- ================= JUGADOR 2 (DERECHA) ================= -->
 			<div class="flex items-center justify-between w-full min-w-0 pl-3">
 				{#if showAvatars}
-					<div class="relative shrink-0 w-10 h-10 flex items-center justify-center">
+					<div class="relative shrink-0 w-11 h-11 flex items-center justify-center overflow-visible">
 						<img
 							alt={p2.name}
 							class="w-10 h-10 rounded-full object-cover bg-neutral-900
@@ -187,10 +200,8 @@
 								? 'text-rose-400'
 								: isP2Active
 									? 'text-[#e5a01d]'
-									: 'text-neutral-400'}"
+									: 'text-neutral-400'}">BOLAS:</span
 						>
-							BOLAS:
-						</span>
 						<div
 							class="w-[1px] h-3.5 {p2.balls < 0
 								? 'bg-rose-500/50'

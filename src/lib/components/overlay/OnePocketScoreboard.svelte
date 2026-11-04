@@ -1,5 +1,4 @@
 <script>
-	import { scale } from 'svelte/transition';
 	import { matchStore } from '../../stores/matchStore.js';
 	import NumberRoll from './NumberRoll.svelte';
 
@@ -15,28 +14,52 @@
 	$: isP1Active = turns.enabled && turns.active === 'p1';
 	$: isP2Active = turns.enabled && turns.active === 'p2';
 
-	$: maxNameLength = Math.max((p1.name || '').length, (p2.name || '').length);
+	// El umbral se activa a partir de 15 caracteres (Intacto)
+	$: maxNameLength = Math.max((p1.name || '').trim().length, (p2.name || '').trim().length);
 	$: isShortMode = maxNameLength <= 6;
+	$: isLongMode = maxNameLength >= 15;
 
-	// Ancho solido constante para evitar tirones en el marco al alternar fotos
-	$: hudWidthClass = isShortMode ? 'w-[750px]' : 'w-[890px]';
-	$: timerWidthClass = isShortMode ? 'w-[520px]' : 'w-[660px]';
+	// Anchuras calibradas (Intactas)
+	$: hudWidthClass = showAvatars
+		? isShortMode
+			? 'w-[820px]'
+			: isLongMode
+				? 'w-[1090px]'
+				: 'w-[970px]'
+		: isShortMode
+			? 'w-[720px]'
+			: isLongMode
+				? 'w-[980px]'
+				: 'w-[860px]';
 
-	$: isTimerLow = timer.enabled && timer.running && timer.seconds <= 10;
-	$: isTimerEmergency = timer.enabled && timer.running && timer.seconds <= 5;
+	$: timerWidthClass = showAvatars
+		? isShortMode
+			? 'w-[610px]'
+			: isLongMode
+				? 'w-[860px]'
+				: 'w-[740px]'
+		: isShortMode
+			? 'w-[510px]'
+			: isLongMode
+				? 'w-[760px]'
+				: 'w-[640px]';
+
+	$: timerRatio = timer.maxSeconds > 0 ? Math.max(0, timer.seconds / timer.maxSeconds) : 0;
+	$: isTimerEmergency = timer.enabled && timer.running && timerRatio <= 0.15 && timerRatio > 0;
+	$: isTimerLow = timer.enabled && timer.running && !isTimerEmergency && timerRatio <= 0.3 && timerRatio > 0;
 </script>
 
 <header
-	class="fixed top-3 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center select-none font-sans transition-transform duration-300 ease-out"
+	class="fixed top-3 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center select-none font-sans transition-all duration-[850ms] ease-out"
 	style="transform: translateX(-50%) scale({hudScale}); transform-origin: top center;"
 >
 	<div
-		class="border-t border-x border-white/20 px-6 py-2.5 text-white transition-all duration-300 ease-in-out shadow-[0_8px_20px_rgba(0,0,0,0.85)] {hudWidthClass}"
+		class="border-t border-x border-white/20 px-6 py-2.5 text-white transition-all duration-[850ms] ease-[cubic-bezier(0.16,1,0.3,1)] shadow-[0_8px_20px_rgba(0,0,0,0.85)] {hudWidthClass}"
 		style="clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 16px 100%); background: linear-gradient(180deg, #10131a 0%, #08090d 100%);"
 	>
 		<div class="grid grid-cols-[1fr_auto_1fr] items-center w-full">
-			<!-- Jugador 1 -->
-			<div class="flex items-center justify-between w-full min-w-0 pr-3">
+			<!-- ==================== JUGADOR 1 ==================== -->
+			<div class="flex items-center justify-between w-full min-w-0 pr-3 gap-3">
 				<div class="flex items-center gap-2 shrink-0">
 					<span
 						class="w-4 text-center text-xs font-black {isP1Active
@@ -55,8 +78,7 @@
 								: 'border-neutral-700 bg-neutral-900/95'}"
 					>
 						<span
-							class="text-[10px] font-extrabold uppercase font-mono tracking-wider flex items-center leading-none {p1.balls <
-							0
+							class="text-[10px] font-extrabold uppercase font-mono tracking-wider flex items-center leading-none {p1.balls < 0
 								? 'text-rose-400'
 								: isP1Active
 									? 'text-[#e5a01d]'
@@ -84,31 +106,32 @@
 
 				<div class="flex-1 min-w-0 px-3 flex items-center justify-center">
 					<span
-						class="text-sm font-extrabold tracking-wider text-white uppercase truncate text-center w-full"
+						class="text-sm font-extrabold tracking-wider uppercase truncate text-center w-full text-white"
 						title={p1.name}
 					>
 						{p1.name}
 					</span>
 				</div>
 
-				{#if showAvatars}
-					<div
-						transition:scale={{ duration: 200 }}
-						class="relative shrink-0 w-10 h-10 flex items-center justify-center"
-					>
+				<!-- Avatar Jugador 1: deslizamiento continuo a 850ms -->
+				<div
+					class="transition-all duration-[850ms] ease-[cubic-bezier(0.16,1,0.3,1)] flex items-center justify-center shrink-0 overflow-visible
+          {showAvatars ? 'w-11 opacity-100 scale-100' : 'w-0 opacity-0 scale-50 pointer-events-none overflow-hidden'}"
+				>
+					<div class="relative w-10 h-10 flex items-center justify-center shrink-0">
 						<img
 							alt={p1.name}
-							class="w-10 h-10 rounded-full object-cover bg-neutral-900
+							class="w-10 h-10 rounded-full object-cover bg-neutral-900 transition-all duration-300 shrink-0
               {isP1Active
 								? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.6)]'
 								: 'ring-1 ring-white/20'}"
 							src={p1.avatar}
 						/>
 					</div>
-				{/if}
+				</div>
 			</div>
 
-			<!-- Centro -->
+			<!-- ==================== CENTRO ==================== -->
 			<div class="flex items-center justify-center shrink-0 px-4 border-x border-white/15">
 				<div class="w-[110px] flex flex-col items-center justify-center py-0.5">
 					<div
@@ -136,27 +159,28 @@
 				</div>
 			</div>
 
-			<!-- Jugador 2 -->
-			<div class="flex items-center justify-between w-full min-w-0 pl-3">
-				{#if showAvatars}
-					<div
-						transition:scale={{ duration: 200 }}
-						class="relative shrink-0 w-10 h-10 flex items-center justify-center"
-					>
+			<!-- ==================== JUGADOR 2 ==================== -->
+			<div class="flex items-center justify-between w-full min-w-0 pl-3 gap-3">
+				<!-- Avatar Jugador 2: deslizamiento continuo a 850ms -->
+				<div
+					class="transition-all duration-[850ms] ease-[cubic-bezier(0.16,1,0.3,1)] flex items-center justify-center shrink-0 overflow-visible
+          {showAvatars ? 'w-11 opacity-100 scale-100' : 'w-0 opacity-0 scale-50 pointer-events-none overflow-hidden'}"
+				>
+					<div class="relative w-10 h-10 flex items-center justify-center shrink-0">
 						<img
 							alt={p2.name}
-							class="w-10 h-10 rounded-full object-cover bg-neutral-900
+							class="w-10 h-10 rounded-full object-cover bg-neutral-900 transition-all duration-300 shrink-0
               {isP2Active
 								? 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.6)]'
 								: 'ring-1 ring-white/20'}"
 							src={p2.avatar}
 						/>
 					</div>
-				{/if}
+				</div>
 
 				<div class="flex-1 min-w-0 px-3 flex items-center justify-center">
 					<span
-						class="text-sm font-extrabold tracking-wider text-white uppercase truncate text-center w-full"
+						class="text-sm font-extrabold tracking-wider uppercase truncate text-center w-full text-white"
 						title={p2.name}
 					>
 						{p2.name}
@@ -173,8 +197,7 @@
 								: 'border-neutral-700 bg-neutral-900/95'}"
 					>
 						<span
-							class="text-[10px] font-extrabold uppercase font-mono tracking-wider flex items-center leading-none {p2.balls <
-							0
+							class="text-[10px] font-extrabold uppercase font-mono tracking-wider flex items-center leading-none {p2.balls < 0
 								? 'text-rose-400'
 								: isP2Active
 									? 'text-[#e5a01d]'
@@ -211,29 +234,33 @@
 		</div>
 	</div>
 
-	<!-- Reloj de tiro -->
+	<!-- RELOJ DE TIRO SIN MICRO-SALTOS (850ms) -->
 	<div
-		class="transition-all duration-500 ease-in-out z-40 mt-1.5 flex items-center justify-between gap-3 {timerWidthClass}
+		class="{timerWidthClass} transition-all duration-[850ms] ease-in-out z-40 mt-1.5 flex items-center justify-between gap-3
     {timer.enabled ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0 pointer-events-none'}"
 	>
 		<div
 			class="h-[7.5px] bg-black/90 w-full rounded-full overflow-hidden shadow-[0_2px_6px_rgba(0,0,0,0.8)]"
 		>
 			<div
-				class="h-full rounded-full transition-all duration-100 ease-linear
+				class="h-full rounded-full
           {isTimerEmergency
-					? 'bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,1)] animate-pulse'
+					? 'bg-red-600 shadow-[0_0_14px_rgba(220,38,38,1)] alert-pulse'
 					: isTimerLow
 						? 'bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.9)]'
 						: 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]'}"
-				style="width: {timer.maxSeconds > 0 ? (timer.seconds / timer.maxSeconds) * 100 : 0}%"
+				style="
+          transition: width 200ms linear, background-color 500ms ease, box-shadow 500ms ease;
+          width: {timerRatio <= 0 ? '0%' : (timerRatio * 100) + '%'};
+          {timerRatio <= 0 ? 'opacity: 0;' : 'opacity: 1;'}
+        "
 			></div>
 		</div>
 
 		<span
-			class="text-xs font-mono font-bold min-w-[28px] text-right
+			class="text-xs font-mono font-bold min-w-[28px] text-right transition-colors duration-200
       {isTimerEmergency
-				? 'text-rose-500 animate-pulse'
+				? 'text-red-500 alert-pulse'
 				: isTimerLow
 					? 'text-orange-400'
 					: 'text-amber-400'}"
@@ -242,3 +269,19 @@
 		</span>
 	</div>
 </header>
+
+<style>
+	@keyframes alertPulseFast {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.35;
+		}
+	}
+
+	.alert-pulse {
+		animation: alertPulseFast 0.5s ease-in-out infinite;
+	}
+</style>
