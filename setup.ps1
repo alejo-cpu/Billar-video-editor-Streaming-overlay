@@ -1,38 +1,26 @@
 # ==========================================================
-# INSTALADOR AUTOMÁTICO HDP BILLAR - WINDOWS 11 COMPATIBLE
+# INSTALADOR AUTOMATICO HDP BILLAR - WINDOWS 11 COMPATIBLE
 # ==========================================================
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $Host.UI.RawUI.WindowTitle = "Instalador - HDP BILLAR"
 
-# Configuración de colores ANSI (Soportados nativamente en Windows 11)
-$Esc    = [char]27
-$Gold   = "$Esc[38;2;245;158;11m"
-$Yellow = "$Esc[38;2;251;191;36m"
-$Green  = "$Esc[32m"
-$Cyan   = "$Esc[36m"
-$Red    = "$Esc[31m"
-$Gray   = "$Esc[90m"
-$Reset  = "$Esc[0m"
-
 function Print-Banner {
     Clear-Host
-    Write-Host "$Gold"
-    Write-Host "  ██╗  ██╗██████╗ ██████╗     ██████╗ ██╗██╗     ██╗      █████╗ ██████╗ "
-    Write-Host "  ██║  ██║██╔══██╗██╔══██╗    ██╔══██╗██║██║     ██║     ██╔══██╗██╔══██╗"
-    Write-Host "  ███████║██║  ██║██████╔╝    ██████╔╝██║██║     ██║     ███████║██████╔╝"
-    Write-Host "  ██╔══██║██║  ██║██╔═══╝     ██╔══██╗██║██║     ██║     ██╔══██║██╔══██╗"
-    Write-Host "  ██║  ██║██████╔╝██║         ██████╔╝██║███████╗███████╗██║  ██║██║  ██║"
-    Write-Host "  ╚═╝  ╚═╝╚═════╝ ╚═╝         ╚═════╝ ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝"
-    Write-Host "$Gray   ───────────────────────────────────────────────────────────────────$Reset"
+    Write-Host "  ================================================================" -ForegroundColor DarkYellow
+    Write-Host "     * * *      H D P   B I L L A R   -   S T U D I O      * * *  " -ForegroundColor Yellow
+    Write-Host "  ================================================================" -ForegroundColor DarkYellow
     Write-Host ""
 }
 
 function Print-DoneStep {
     param([string]$Step, [string]$Title, [string]$Status)
     $formattedTitle = $Title.PadRight(40)
-    Write-Host "  $Yellow[$Step/6]$Reset  $Green[✔]$Reset  $formattedTitle  $Green[ $Status ]$Reset"
+    Write-Host "  [$Step/6] " -ForegroundColor Yellow -NoNewline
+    Write-Host "[OK] " -ForegroundColor Green -NoNewline
+    Write-Host "$formattedTitle " -NoNewline
+    Write-Host "[ $Status ]" -ForegroundColor Green
 }
 
 # Inicializar directorio actual y archivo de registro de inmediato
@@ -40,7 +28,7 @@ $CurrentDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $My
 Set-Location $CurrentDir
 
 $LogFile = Join-Path $CurrentDir "install.log"
-"=== Registro de instalación HDP BILLAR - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===" | Out-File -FilePath $LogFile -Encoding utf8
+"=== Registro de instalacion HDP BILLAR - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===" | Out-File -FilePath $LogFile -Encoding utf8
 
 function Run-StepWithSpinner {
     param(
@@ -50,15 +38,15 @@ function Run-StepWithSpinner {
         [scriptblock]$Task,
         [array]$ArgsList = @()
     )
-    $frames = @('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏')
+    $frames = @('-', '\', '|', '/')
     $job = Start-Job -ScriptBlock $Task -ArgumentList $ArgsList
     $formattedTitle = $Title.PadRight(40)
 
     $i = 0
     while ($job.State -eq 'Running') {
         $frame = $frames[$i % $frames.Length]
-        Write-Host -NoNewline "`r  $Yellow[$Step/6]$Reset  $Cyan$frame$Reset  $formattedTitle  ${Cyan}Procesando...$Reset"
-        Start-Sleep -Milliseconds 80
+        Write-Host -NoNewline "`r  [$Step/6] $frame  $formattedTitle  Procesando..."
+        Start-Sleep -Milliseconds 85
         $i++
     }
 
@@ -72,13 +60,18 @@ function Run-StepWithSpinner {
     Remove-Job -Job $job -Force
 
     if ($jobFailed) {
-        Write-Host "`r  $Yellow[$Step/6]$Reset  $Red[✘]$Reset  $formattedTitle  $Red[ Error ]$Reset"
+        Write-Host -NoNewline "`r  [$Step/6] "
+        Write-Host "[ERROR] " -ForegroundColor Red -NoNewline
+        Write-Host "$formattedTitle"
         if ($jobOutput) {
             $jobOutput | Out-File -FilePath $LogFile -Append -Encoding utf8
         }
         exit 1
     } else {
-        Write-Host "`r  $Yellow[$Step/6]$Reset  $Green[✔]$Reset  $formattedTitle  $Green[ $DoneStatus ]$Reset"
+        Write-Host -NoNewline "`r  [$Step/6] "
+        Write-Host "[OK]    " -ForegroundColor Green -NoNewline
+        Write-Host "$formattedTitle " -NoNewline
+        Write-Host "[ $DoneStatus ]" -ForegroundColor Green
     }
 }
 
@@ -86,10 +79,10 @@ try {
     Print-Banner
 
     # PASO 1
-    Print-DoneStep "1" "Compatibilidad y codificación UTF-8" "OK"
+    Print-DoneStep "1" "Compatibilidad y codificacion UTF-8" "OK"
     Start-Sleep -Milliseconds 150
 
-    # PASO 2: Detección inteligente de Node
+    # PASO 2: Deteccion de Node.js
     $NodeDir = ""
     $NodeCmd = ""
     $NpmCmd  = ""
@@ -112,9 +105,9 @@ try {
         $NpmCmd  = "npm"
         $NodeDir = Split-Path -Parent (Get-Command node).Source
     }
-    Print-DoneStep "2" "Entorno de ejecución (Node.js)" $NodeStatus
+    Print-DoneStep "2" "Entorno de ejecucion (Node.js)" $NodeStatus
 
-    # PASO 3: Descarga y configuración de Node.js portable (si no existe)
+    # PASO 3: Descarga y configuracion de Node.js portable si no existe
     if (-not $NodeCmd) {
         $RuntimeDir       = Join-Path $CurrentDir "runtime"
         $NodeZipPath      = Join-Path $RuntimeDir "node.zip"
@@ -126,22 +119,19 @@ try {
 
         $NodeDownloadUrl = "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip"
 
-        Run-StepWithSpinner "3" "Configuración de entorno de ejecución" "Descargado y configurado" -Task {
+        Run-StepWithSpinner "3" "Configuracion de entorno de ejecucion" "Descargado y configurado" -Task {
             param($Url, $Zip, $RuntimeDir, $FinalDir, $Log)
             try {
-                # Forzar protocolos seguros TLS 1.2 / 1.3 de Windows 11
                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
                 $web = New-Object System.Net.WebClient
                 $web.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                 $web.DownloadFile($Url, $Zip)
 
-                # Descomprimir
                 Expand-Archive -Path $Zip -DestinationPath $RuntimeDir -Force
 
-                # Localizar carpeta descomprimida
                 $Folder = Get-ChildItem -Path $RuntimeDir -Directory | Where-Object { $_.Name -like "node-v*-win-x64" } | Select-Object -First 1
                 if (-not $Folder) {
-                    throw "No se encontró la carpeta de Node descomprimida en $RuntimeDir"
+                    throw "No se encontro la carpeta descomprimida de Node en $RuntimeDir"
                 }
 
                 if (Test-Path $FinalDir) {
@@ -161,21 +151,20 @@ try {
         $NodeCmd = Join-Path $NodeDir "node.exe"
         $NpmCmd  = Join-Path $NodeDir "npm.cmd"
     } else {
-        Print-DoneStep "3" "Configuración de entorno de ejecución" "Listo"
+        Print-DoneStep "3" "Configuracion de entorno de ejecucion" "Listo"
     }
 
-    # PASO 4: Instalación de dependencias (npm install)
-    Run-StepWithSpinner "4" "Librerías y dependencias del sistema" "Instaladas" -Task {
+    # PASO 4: Instalacion de dependencias con PATH heredado en el subproceso
+    Run-StepWithSpinner "4" "Librerias y dependencias del sistema" "Instaladas" -Task {
         param($Dir, $NodeDir, $Npm, $Log)
         try {
-            # Inyección crítica: el subproceso de Windows 11 debe tener node en su propio PATH
             if ($NodeDir -and (Test-Path $NodeDir)) {
                 $env:PATH = "$NodeDir;$env:PATH"
             }
             Set-Location $Dir
             & $Npm install --no-audit --no-fund --loglevel=error >> $Log 2>&1
             if ($LASTEXITCODE -ne 0) {
-                throw "npm install finalizó con código de error $LASTEXITCODE"
+                throw "npm install finalizo con codigo de error $LASTEXITCODE"
             }
         } catch {
             $_ | Out-File -FilePath $Log -Append -Encoding utf8
@@ -183,7 +172,7 @@ try {
         }
     } -ArgsList @($CurrentDir, $NodeDir, $NpmCmd, $LogFile)
 
-    # PASO 5: Carpetas necesarias
+    # PASO 5: Creacion de carpetas
     $DirsToEnsure = @(
         (Join-Path $CurrentDir "public\renders"),
         (Join-Path $CurrentDir "public\temp_uploads"),
@@ -195,7 +184,7 @@ try {
     Print-DoneStep "5" "Motor multimedia (FFmpeg) y carpetas" "Verificado"
     Start-Sleep -Milliseconds 150
 
-    # PASO 6: Verificar lanzador INICIAR_APP.bat (no sobreescribir si ya existe)
+    # PASO 6: Comprobar lanzador
     $LauncherBatPath = Join-Path $CurrentDir "INICIAR_APP.bat"
     if (-not (Test-Path $LauncherBatPath)) {
         $LauncherContent = @"
@@ -247,20 +236,20 @@ exit /b 0
 "@
         [System.IO.File]::WriteAllText($LauncherBatPath, $LauncherContent, [System.Text.Encoding]::ASCII)
     }
-    Print-DoneStep "6" "Lanzador de inicio rápido" "INICIAR_APP.bat"
+    Print-DoneStep "6" "Lanzador de inicio rapido" "INICIAR_APP.bat"
     Start-Sleep -Milliseconds 150
 
     # Cuadro final
     Write-Host ""
-    Write-Host "  $Yellow┌──────────────────────────────────────────────────────────────────┐$Reset"
-    Write-Host "  $Yellow│$Reset  $Green[✔]$Reset  $Gold INSTALACIÓN COMPLETADA EXITOSAMENTE (6/6)$Reset                 $Yellow│$Reset"
-    Write-Host "  $Yellow│$Reset                                                                 $Yellow│$Reset"
-    Write-Host "  $Yellow│$Reset  Para iniciar HDP BILLAR en cualquier momento, solo ejecuta:     $Yellow│$Reset"
-    Write-Host "  $Yellow│$Reset  👉  $Gold INICIAR_APP.bat $Reset                                              $Yellow│$Reset"
-    Write-Host "  $Yellow└──────────────────────────────────────────────────────────────────┘$Reset"
+    Write-Host "  +--------------------------------------------------------------+" -ForegroundColor Yellow
+    Write-Host "  |  [OK] INSTALACION COMPLETADA EXITOSAMENTE (6/6)              |" -ForegroundColor Green
+    Write-Host "  |                                                              |" -ForegroundColor Yellow
+    Write-Host "  |  Para iniciar HDP BILLAR en cualquier momento, ejecuta:      |" -ForegroundColor Yellow
+    Write-Host "  |  -> INICIAR_APP.bat                                          |" -ForegroundColor Cyan
+    Write-Host "  +--------------------------------------------------------------+" -ForegroundColor Yellow
     Write-Host ""
 
-    $Answer = Read-Host "  ¿Deseas iniciar HDP BILLAR ahora mismo? (S/N)"
+    $Answer = Read-Host "  Deseas iniciar HDP BILLAR ahora mismo? (S/N)"
     if ($Answer -match "^[sSyY]") {
         Start-Process -FilePath $LauncherBatPath
     }
@@ -268,7 +257,7 @@ exit /b 0
     exit 0
 } catch {
     Write-Host ""
-    Write-Host "  $Red[✘] Ocurrió un error: $($_.Exception.Message)$Reset"
+    Write-Host "  [ERROR] Ocurrio un fallo critico: $($_.Exception.Message)" -ForegroundColor Red
     $_ | Out-File -FilePath $LogFile -Append -Encoding utf8
     exit 1
 }
