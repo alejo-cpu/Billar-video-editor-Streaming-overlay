@@ -59,3 +59,11 @@ desktop.ini
 
 install.log
 billiard-app-windows/
+
+
+# Empaquetado local de Windows
+billiard-app-windows/
+
+# Reportes y caché de Vitest
+coverage/
+.vitest/

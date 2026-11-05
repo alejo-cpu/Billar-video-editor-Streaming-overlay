@@ -20,5 +20,10 @@ export default defineConfig({
 				changeOrigin: true
 			}
 		}
+	},
+	test: {
+		globals: true,
+		environment: 'node',
+		exclude: ['**/node_modules/**', '**/dist/**', '**/billiard-app-windows/**']
 	}
 });
